@@ -7,10 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=50">
+  <link rel="stylesheet" href="style.css?v=51">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
-<body>
+<body class="auth-pending">
 
   
   <div class="bg-glow bg-glow-1"></div>
@@ -31,21 +31,47 @@
       <div id="lobby-wizard" class="lobby-wizard">
 
         
-        <div class="wizard-stage active" id="stage-nickname">
-          <div class="input-group">
-            <label for="username-input">
-              <i class="fa-regular fa-user"></i> Ваше имя
-            </label>
-            <input type="text" id="username-input" placeholder="Как вас зовут?" autocomplete="off" maxlength="32">
+        <div class="wizard-stage active" id="stage-auth">
+          <div class="auth-tabs" role="tablist">
+            <button type="button" class="auth-tab active" data-mode="login" role="tab" aria-selected="true">Вход</button>
+            <button type="button" class="auth-tab" data-mode="register" role="tab" aria-selected="false">Регистрация</button>
           </div>
-          <button type="button" id="btn-wizard-next-1" class="btn-primary wizard-btn-spaced">
-            Продолжить <i class="fa-solid fa-arrow-right"></i>
-          </button>
+
+          <form id="auth-form" class="auth-form" novalidate>
+            <div class="input-group">
+              <label for="auth-username"><i class="fa-regular fa-user"></i> Имя пользователя</label>
+              <input type="text" id="auth-username" name="username" placeholder="Например, anna_77" autocomplete="username" maxlength="24" autocapitalize="off" spellcheck="false">
+              <p class="field-error" id="auth-username-error" hidden></p>
+            </div>
+
+            <div class="input-group">
+              <label for="auth-password"><i class="fa-solid fa-lock"></i> Пароль</label>
+              <div class="password-field">
+                <input type="password" id="auth-password" name="password" placeholder="Минимум 8 символов" autocomplete="current-password" maxlength="128">
+                <button type="button" class="password-toggle" id="auth-toggle-pass" aria-label="Показать пароль" tabindex="-1">
+                  <i class="fa-regular fa-eye"></i>
+                </button>
+              </div>
+              <div class="password-meter" id="auth-meter" hidden><span></span></div>
+              <p class="field-error" id="auth-password-error" hidden></p>
+            </div>
+
+            <div class="input-group" id="auth-confirm-group" hidden>
+              <label for="auth-confirm"><i class="fa-solid fa-lock"></i> Повторите пароль</label>
+              <input type="password" id="auth-confirm" name="confirm" placeholder="Ещё раз пароль" autocomplete="new-password" maxlength="128">
+              <p class="field-error" id="auth-confirm-error" hidden></p>
+            </div>
+
+            <div class="auth-error" id="auth-error" role="alert" hidden></div>
+
+            <button type="submit" id="auth-submit" class="btn-primary btn-full">
+              <span id="auth-submit-label">Войти</span> <i class="fa-solid fa-arrow-right"></i>
+            </button>
+          </form>
         </div>
 
-        
         <div class="wizard-stage" id="stage-avatar">
-          <label class="wizard-label">Фото профиля</label>
+          <label class="wizard-label">Аккаунт создан! Добавьте фото профиля</label>
           <p class="wizard-hint">Загрузите фото или пропустите — мы создадим аватар автоматически</p>
           <div class="avatar-upload-area">
             <div class="avatar-upload-circle" id="avatar-upload-circle">
@@ -60,7 +86,7 @@
           </div>
           <div class="wizard-buttons">
             <button type="button" id="btn-wizard-back-2" class="btn-secondary">
-              <i class="fa-solid fa-arrow-left"></i> Назад
+              Пропустить
             </button>
             <button type="button" id="btn-wizard-next-2" class="btn-primary">
               Готово <i class="fa-solid fa-check"></i>
@@ -427,7 +453,19 @@
     <div class="profile-hero">
       <div class="profile-avatar-ring" id="profile-avatar-large"></div>
       <div class="profile-username" id="profile-display-name">—</div>
-      <div class="profile-tagline">Wave — вместе интереснее</div>
+      <div class="profile-tagline" id="profile-since">Wave — вместе интереснее</div>
+      <div class="profile-actions">
+        <button type="button" id="btn-profile-avatar" class="profile-link-btn"><i class="fa-solid fa-camera"></i> Сменить фото</button>
+        <button type="button" id="btn-toggle-password" class="profile-link-btn"><i class="fa-solid fa-key"></i> Пароль</button>
+        <button type="button" id="btn-profile-logout" class="profile-link-btn danger"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button>
+      </div>
+      <input type="file" id="profile-avatar-input" accept="image/*" hidden>
+      <form id="password-form" class="password-form" hidden novalidate>
+        <input type="password" id="pw-old" placeholder="Текущий пароль" autocomplete="current-password" maxlength="128">
+        <input type="password" id="pw-new" placeholder="Новый пароль (от 8 символов)" autocomplete="new-password" maxlength="128">
+        <div class="auth-error" id="pw-message" hidden></div>
+        <button type="submit" class="btn-primary btn-full" id="pw-submit">Сменить пароль</button>
+      </form>
     </div>
 
     <div class="profile-stats-row">
@@ -446,7 +484,10 @@
     </div>
 
     <div class="profile-history">
-      <h3>История просмотров</h3>
+      <div class="profile-history-head">
+        <h3>История просмотров</h3>
+        <button type="button" id="btn-clear-history" class="profile-link-btn danger" hidden>Очистить</button>
+      </div>
       <div id="watch-history-list" class="history-empty">
         <i class="fa-solid fa-film"></i>
         <p>Ни одного видео пока нет.<br>Запустите что-нибудь — и оно появится здесь.</p>
@@ -458,7 +499,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://vk.com/js/api/videoplayer.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
-  <script src="client.js?v=111"></script>
-  <script src="profile.js?v=111"></script>
+  <script src="client.js?v=112"></script>
+  <script src="profile.js?v=112"></script>
 </body>
 </html>

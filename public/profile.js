@@ -1,113 +1,17 @@
-
-
 (function () {
   'use strict';
 
-  
-  const STATS_KEY    = 'wave_watch_stats_v2';
-  const SESSIONS_KEY = 'wave_sessions_v1';
-  const CHAT_MAX_DOM = 100; 
+  const CHAT_MAX_DOM = 100;
+  const PLATFORMS = { youtube: 'YouTube', vk: 'VK Видео', rutube: 'Rutube', direct: 'Прямая ссылка' };
 
-  
-  function loadStats() {
-    try { return JSON.parse(localStorage.getItem(STATS_KEY)) || { totalSeconds: 0, history: [] }; }
-    catch (e) { return { totalSeconds: 0, history: [] }; }
-  }
-  function saveStats(s) {
-    try { localStorage.setItem(STATS_KEY, JSON.stringify(s)); } catch (e) {}
-  }
-  function loadSessions() {
-    try { return parseInt(localStorage.getItem(SESSIONS_KEY), 10) || 0; }
-    catch (e) { return 0; }
-  }
-  function incSessions() {
-    try { localStorage.setItem(SESSIONS_KEY, loadSessions() + 1); } catch (e) {}
-  }
-
-  
-  let trackInterval   = null;
-  let currentTracked  = null; 
-  let sessionStart    = null;
-
-  function isVideoPlaying() {
-    try {
-      if (window.ytPlayer && window.currentVideo?.type === 'youtube') {
-        return window.ytPlayer.getPlayerState?.() === 1;
-      }
-      if (window.html5Player && !window.html5Player.paused && window.currentVideo?.type === 'direct') {
-        return true;
-      }
-      if (window.vkPlayer && window.currentVideo?.type === 'vk') {
-        return true; 
-      }
-    } catch (e) {}
-    return false;
-  }
-
-  function startTracking(video) {
-    if (!video) return;
-    currentTracked = video;
-    sessionStart   = sessionStart || Date.now();
-    if (trackInterval) return;
-    trackInterval = setInterval(() => {
-      if (!isVideoPlaying() || !currentTracked) return;
-      const stats = loadStats();
-      stats.totalSeconds = (stats.totalSeconds || 0) + 1;
-      const key = currentTracked.id || currentTracked.url || 'unknown';
-      const idx = stats.history.findIndex(h => h.key === key);
-      if (idx >= 0) {
-        stats.history[idx].watchedSeconds = (stats.history[idx].watchedSeconds || 0) + 1;
-        stats.history[idx].lastWatched    = Date.now();
-      } else {
-        stats.history.unshift({
-          key,
-          title:         currentTracked.title || 'Без названия',
-          platform:      currentTracked.type  || 'direct',
-          thumb:         currentTracked.thumb || '',
-          watchedSeconds: 1,
-          firstWatched:  Date.now(),
-          lastWatched:   Date.now()
-        });
-        if (stats.history.length > 50) stats.history = stats.history.slice(0, 50);
-      }
-      saveStats(stats);
-    }, 1000);
-  }
-
-  function stopTracking() {
-    if (trackInterval) { clearInterval(trackInterval); trackInterval = null; }
-    currentTracked = null;
-  }
-
-  
-  if (window.socket) {
-    window.socket.on('room-state', (state) => {
-      if (state && state.video) {
-        startTracking(state.video);
-      } else {
-        stopTracking();
-      }
-    });
-
-    window.socket.on('video-change', (video) => {
-      if (video) startTracking(video);
-      else stopTracking();
-    });
-
-    
-    window.socket.on('room-joined', () => {
-      incSessions();
-    });
-  }
-
-  
+  // Время просмотра и история считаются на сервере (по аккаунту), здесь — только показ.
   function fmtSeconds(s) {
     s = Math.floor(s || 0);
     if (s < 60)   return s + 'с';
     if (s < 3600) return Math.floor(s / 60) + 'м ' + (s % 60) + 'с';
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
-    return h + 'ч ' + (m ? m + 'м' : '');
+    return h + 'ч' + (m ? ' ' + m + 'м' : '');
   }
   function fmtHours(s) {
     const h = s / 3600;
@@ -115,23 +19,118 @@
   }
   function fmtRelative(ts) {
     if (!ts) return '';
-    const d = Math.floor((Date.now() - ts) / 86400000);
-    if (d === 0) return 'сегодня';
+    const startOfToday = new Date().setHours(0, 0, 0, 0);
+    const d = Math.floor((startOfToday - new Date(ts).setHours(0, 0, 0, 0)) / 86400000);
+    if (d <= 0) return 'сегодня';
     if (d === 1) return 'вчера';
     if (d < 7)  return d + ' дн. назад';
     return new Date(ts).toLocaleDateString('ru', { day: 'numeric', month: 'short' });
   }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function safeUrl(u) {
+    return /^(https?:\/\/|\/(?!\/)|data:image\/)/i.test(u || '') ? u : '';
+  }
 
-  
   const panel      = document.getElementById('profile-panel');
   const backdrop   = document.getElementById('profile-backdrop');
   const btnClose   = document.getElementById('btn-close-profile');
   const avatarSlot = document.getElementById('profile-avatar-large');
   const nameEl     = document.getElementById('profile-display-name');
+  const sinceEl    = document.getElementById('profile-since');
   const statHours  = document.getElementById('stat-hours');
   const statVids   = document.getElementById('stat-videos');
   const statSess   = document.getElementById('stat-sessions');
   const histList   = document.getElementById('watch-history-list');
+  const btnClear   = document.getElementById('btn-clear-history');
+
+  let historyItems = [];
+
+  function renderAvatar() {
+    if (!avatarSlot) return;
+    if (avatarData && (avatarData.startsWith('data:') || avatarData.startsWith('http'))) {
+      avatarSlot.innerHTML = `<img src="${esc(avatarData)}" alt="${esc(username)}">`;
+    } else {
+      const colors = ['#4A9E6E', '#7EC49B', '#8b5cf6', '#ec4899', '#f59e0b', '#06b6d4'];
+      const bg = colors[(username.codePointAt(0) || 0) % colors.length];
+      avatarSlot.innerHTML = `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="${bg}"/><text x="50" y="66" font-family="sans-serif" font-size="44" font-weight="bold" fill="#fff" text-anchor="middle">${esc((Array.from(username)[0] || '?').toUpperCase())}</text></svg>`;
+    }
+  }
+
+  function renderHistory() {
+    if (!histList) return;
+    if (btnClear) btnClear.hidden = !historyItems.length;
+    if (!historyItems.length) {
+      histList.className = 'history-empty';
+      histList.innerHTML = `
+        <i class="fa-solid fa-film"></i>
+        <p>Ни одного видео пока нет.<br>Запустите что-нибудь — и оно появится здесь.</p>`;
+      return;
+    }
+    histList.className = '';
+    histList.innerHTML = '';
+    historyItems.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'history-item';
+      const thumbSrc = safeUrl(item.thumb);
+      const thumb = thumbSrc
+        ? `<img class="history-thumb" src="${esc(thumbSrc)}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`
+        : `<div class="history-thumb"></div>`;
+      el.innerHTML = `
+        ${thumb}
+        <div class="history-info">
+          <div class="history-title">${esc(item.title || item.url || 'Без названия')}</div>
+          <div class="history-meta">
+            <span class="history-duration">${fmtSeconds(item.watchedSeconds)}</span>
+            <span class="history-platform">${esc(PLATFORMS[item.type] || 'Видео')}</span>
+            <span class="history-date">${fmtRelative(item.lastWatched)}</span>
+          </div>
+        </div>
+        <div class="history-actions">
+          <button type="button" class="history-action replay" title="Смотреть снова" aria-label="Смотреть снова"><i class="fa-solid fa-play"></i></button>
+          <button type="button" class="history-action remove" title="Убрать из истории" aria-label="Убрать из истории"><i class="fa-solid fa-xmark"></i></button>
+        </div>`;
+      el.querySelector('.replay').addEventListener('click', () => replay(item));
+      el.querySelector('.remove').addEventListener('click', async () => {
+        try {
+          await api('DELETE', '/api/history/' + encodeURIComponent(item.key));
+          historyItems = historyItems.filter(h => h.key !== item.key);
+          statVids.textContent = historyItems.length;
+          renderHistory();
+        } catch (e) { alert(e.message); }
+      });
+      histList.appendChild(el);
+    });
+  }
+
+  function replay(item) {
+    const video = {
+      type: item.type, id: item.id, url: item.url, playerUrl: item.playerUrl,
+      referer: item.referer, title: item.title, thumb: item.thumb
+    };
+    closeProfile();
+    if (roomId) {
+      socket.emit('video-change', video);
+    } else {
+      openCreateVideoModal(video);
+    }
+  }
+
+  async function refreshProfile() {
+    if (nameEl) nameEl.textContent = username || '—';
+    renderAvatar();
+    try {
+      const data = await api('GET', '/api/history');
+      historyItems = data.history || [];
+      if (statHours) statHours.textContent = fmtHours(data.stats.totalSeconds);
+      if (statVids)  statVids.textContent  = data.stats.videos;
+      if (statSess)  statSess.textContent  = data.stats.sessions;
+      renderHistory();
+    } catch (e) {
+      if (histList) { histList.className = 'history-empty'; histList.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i><p>Не удалось загрузить историю</p>`; }
+    }
+  }
 
   function openProfile() {
     refreshProfile();
@@ -143,83 +142,82 @@
     panel.classList.remove('active');
     backdrop.classList.remove('active');
     document.body.style.overflow = '';
+    const pf = document.getElementById('password-form');
+    if (pf) pf.hidden = true;
   }
 
-  function refreshProfile() {
-    
-    const profile = (() => {
-      try { return JSON.parse(localStorage.getItem('wave_profile_v1')); } catch(e) { return null; }
-    })();
-    const uname = (profile && profile.username) || window.username || '?';
-    const avatar = (profile && profile.avatarData) || null;
-
-    if (nameEl) nameEl.textContent = uname;
-
-    if (avatarSlot) {
-      if (avatar && (avatar.startsWith('data:') || avatar.startsWith('http'))) {
-        avatarSlot.innerHTML = `<img src="${avatar}" alt="${uname}">`;
-      } else {
-        const colors = ['#4A9E6E', '#7EC49B', '#B9E5C8', '#6B5545', '#9C8472'];
-        const bg = colors[uname.charCodeAt(0) % colors.length];
-        avatarSlot.innerHTML = `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="${bg}"/><text x="50" y="66" font-family="sans-serif" font-size="44" font-weight="bold" fill="#2B1A12" text-anchor="middle">${uname[0].toUpperCase()}</text></svg>`;
-      }
-    }
-
-    
-    const stats = loadStats();
-    if (statHours)  statHours.textContent  = fmtHours(stats.totalSeconds);
-    if (statVids)   statVids.textContent   = stats.history.length;
-    if (statSess)   statSess.textContent   = loadSessions();
-
-    
-    if (!histList) return;
-    if (!stats.history.length) {
-      histList.innerHTML = `
-        <div class="history-empty">
-          <i class="fa-solid fa-film"></i>
-          <p>Ни одного видео пока нет.<br>Запустите что-нибудь — и оно появится здесь.</p>
-        </div>`;
-      return;
-    }
-    histList.innerHTML = '';
-    stats.history.slice(0, 30).forEach(item => {
-      const el = document.createElement('div');
-      el.className = 'history-item';
-      const thumb = item.thumb
-        ? `<img class="history-thumb" src="${item.thumb}" alt="" referrerpolicy="no-referrer" onerror="this.style.display='none'">`
-        : `<div class="history-thumb" style="background:var(--bg-2);"></div>`;
-      const pBadge = item.platform === 'youtube' ? 'YouTube' : item.platform === 'vk' ? 'VK Видео' : 'Прямая ссылка';
-      el.innerHTML = `
-        ${thumb}
-        <div class="history-info">
-          <div class="history-title">${escHtmlSafe(item.title)}</div>
-          <div class="history-meta">
-            <span class="history-duration">${fmtSeconds(item.watchedSeconds)}</span>
-            <span class="history-platform">${pBadge}</span>
-            <span class="history-date">${fmtRelative(item.lastWatched)}</span>
-          </div>
-        </div>`;
-      histList.appendChild(el);
-    });
-  }
-
-  function escHtmlSafe(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  
   const profileBar = document.getElementById('saved-profile-bar');
-  if (profileBar) {
-    profileBar.style.cursor = 'pointer';
-    profileBar.addEventListener('click', (e) => {
-      if (e.target.closest('#btn-logout')) return; 
-      openProfile();
-    });
-  }
-
+  if (profileBar) profileBar.addEventListener('click', openProfile);
   if (btnClose)  btnClose.addEventListener('click', closeProfile);
   if (backdrop)  backdrop.addEventListener('click', closeProfile);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
+
+  window.addEventListener('wave:user', (e) => { if (!e.detail) closeProfile(); });
+
+  if (btnClear) btnClear.addEventListener('click', async () => {
+    if (!confirm('Очистить всю историю просмотров?')) return;
+    try {
+      await api('DELETE', '/api/history');
+      historyItems = [];
+      statVids.textContent = '0';
+      renderHistory();
+    } catch (e) { alert(e.message); }
+  });
+
+  document.getElementById('btn-profile-logout').addEventListener('click', () => {
+    if (confirm('Выйти из аккаунта?')) { closeProfile(); window.waveLogout(); }
+  });
+
+  // ── Смена фото ────────────────────────────────────────────────────────────
+  const avatarInput = document.getElementById('profile-avatar-input');
+  document.getElementById('btn-profile-avatar').addEventListener('click', () => avatarInput.click());
+  avatarInput.addEventListener('change', () => {
+    const file = avatarInput.files && avatarInput.files[0];
+    avatarInput.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = async () => {
+      URL.revokeObjectURL(url);
+      const size = Math.min(img.width, img.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 256;
+      canvas.getContext('2d').drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, 256, 256);
+      try {
+        const { user } = await api('PUT', '/api/profile', { avatar: canvas.toDataURL('image/jpeg', 0.85) });
+        avatarData = user.avatar || null;
+        updateProfileBar();
+        renderAvatar();
+      } catch (e) { alert(e.message); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); alert('Не удалось прочитать изображение'); };
+    img.src = url;
+  });
+
+  // ── Смена пароля ──────────────────────────────────────────────────────────
+  const pwForm = document.getElementById('password-form');
+  const pwMsg  = document.getElementById('pw-message');
+  document.getElementById('btn-toggle-password').addEventListener('click', () => {
+    pwForm.hidden = !pwForm.hidden;
+    pwMsg.hidden = true;
+    if (!pwForm.hidden) document.getElementById('pw-old').focus();
+  });
+  pwForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const oldPassword = document.getElementById('pw-old').value;
+    const newPassword = document.getElementById('pw-new').value;
+    const btn = document.getElementById('pw-submit');
+    const show = (text, ok) => { pwMsg.textContent = text; pwMsg.classList.toggle('ok', !!ok); pwMsg.hidden = false; };
+    if (newPassword.length < 8) return show('Новый пароль: минимум 8 символов');
+    btn.disabled = true;
+    try {
+      await api('POST', '/api/auth/password', { oldPassword, newPassword });
+      pwForm.reset();
+      show('Пароль изменён. На других устройствах потребуется войти заново', true);
+    } catch (err) { show(err.message); }
+    finally { btn.disabled = false; }
+  });
+
 
   
   const chatMessages = document.getElementById('chat-messages');
@@ -330,14 +328,6 @@
   }
 
   
-
-  const lobbyScreen = document.getElementById('lobby-screen');
-  if (lobbyScreen) {
-    const obs2 = new MutationObserver(() => {
-      if (lobbyScreen.classList.contains('active')) stopTracking();
-    });
-    obs2.observe(lobbyScreen, { attributes: true, attributeFilter: ['class'] });
-  }
 
   console.log('[Wave Profile] loaded ✓');
 

@@ -5,6 +5,7 @@ const https   = require('https');
 const { Server } = require('socket.io');
 const path    = require('path');
 const fs      = require('fs');
+const auth    = require('./auth');
 
 
 let config = { PORT: 3000, VK_SERVICE_TOKEN: '' };
@@ -56,6 +57,9 @@ setInterval(() => {
 }, 300_000);
 
 app.use('/api', rateLimiter);
+app.use(express.json({ limit: '400kb' }));
+auth.mount(app);
+io.use(auth.socketMiddleware);
 
 
 
@@ -345,38 +349,6 @@ app.get('/api/resolve-video', async (req, res) => {
       }
     }
 
-    if (req.query.debug === '1') {
-      const scripts = [...page.body.matchAll(/<script\b[^>]*\ssrc=["']([^"']+)["']/gi)].map(m => m[1]).slice(0, 30);
-      const hints = [...new Set([...page.body.matchAll(/["'(]((?:https?:)?\/\/[^"'\s)]*?(?:api|player|embed|video|stream|cdn|playlist)[^"'\s)]*)/gi)].map(m => m[1]))].slice(0, 40);
-      const scriptReports = [];
-      if (req.query.scripts === '1') {
-        const own = [...page.body.matchAll(/<script\b[^>]*\ssrc=["']([^"']+)["']/gi)].map(m => m[1])
-          .filter(u => !/jquery|metrika|yandex|google|deltarockme|vak345/i.test(u)).slice(0, 8);
-        const pat = /(?:fetch\s*\(|XMLHttpRequest|\.ajax\s*\(|\$\.(?:get|post|getJSON)\s*\(|iframe|kinopoisk|kp_id|imdb|tmdb|\/api\/|api\.|m3u8|\.mp4|playlist|socialAlias|atob\s*\(|new Kinobox|kinobox)/gi;
-        for (const src of own) {
-          try {
-            const abs = new URL(src, page.finalUrl).href;
-            const r = await fetchPage(abs, page.finalUrl);
-            const code = r.body;
-            const hits = [];
-            let m;
-            pat.lastIndex = 0;
-            while ((m = pat.exec(code)) && hits.length < 25) {
-              hits.push(code.slice(Math.max(0, m.index - 80), m.index + 160).replace(/\s+/g, ' '));
-              pat.lastIndex = m.index + 160;
-            }
-            scriptReports.push({ url: abs, status: r.status, bytes: code.length, head: code.replace(/\s+/g, ' ').slice(0, 600), hits });
-          } catch (e) {
-            scriptReports.push({ url: src, error: e.message });
-          }
-        }
-      }
-      return res.json({
-        debug: true, scriptReports, status: page.status, contentType: page.contentType, finalUrl: page.finalUrl,
-        bytes: page.body.length, title: cleanTitle, media, iframes, scripts, hints,
-        snippet: page.body.replace(/\s+/g, ' ').slice(0, 3000)
-      });
-    }
     if (!media.length) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Не удалось найти видео на этой странице' });
     }
@@ -592,6 +564,33 @@ function pushSystemMsg(room, text) {
 const MSG_RATE_LIMIT = 5;
 const MSG_RATE_WINDOW = 1000;
 
+// Время просмотра считаем на сервере: пока в комнате играет видео, каждому
+// авторизованному зрителю засчитывается тик (один раз на аккаунт, даже при нескольких вкладках).
+const WATCH_TICK_S = 5;
+async function fetchVideoTitle(video) {
+  if (video.type === 'youtube' && /^[\w-]{11}$/.test(video.id || '')) {
+    const r = await httpGet(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${video.id}`);
+    return JSON.parse(r.body.toString('utf8')).title;
+  }
+  if (video.type === 'rutube' && /^[\w-]+$/.test(video.id || '')) {
+    const r = await httpGet(`https://rutube.ru/api/video/${encodeURIComponent(video.id)}/`, { headers: { Referer: 'https://rutube.ru/' } });
+    return JSON.parse(r.body.toString('utf8')).title;
+  }
+  return null;
+}
+setInterval(() => {
+  for (const room of Object.values(rooms)) {
+    if (!room.isPlaying || !room.video) continue;
+    const seen = new Set();
+    for (const u of room.users) {
+      const uid = io.sockets.sockets.get(u.id)?.data.userId;
+      if (!uid || seen.has(uid)) continue;
+      seen.add(uid);
+      auth.recordWatch(uid, room.video, WATCH_TICK_S, fetchVideoTitle);
+    }
+  }
+}, WATCH_TICK_S * 1000).unref();
+
 io.on('connection', (socket) => {
   let currentRoomId = null;
   let username      = 'Аноним';
@@ -609,8 +608,10 @@ io.on('connection', (socket) => {
   }
 
   
-  socket.on('join-room', ({ roomId, user, avatar }) => {
+  socket.on('join-room', ({ roomId }) => {
     if (!roomId || typeof roomId !== 'string') return;
+    const identity = auth.roomIdentity(socket.data.userId);
+    if (!identity) return socket.disconnect(true);
     const safeRoomId = roomId.slice(0, 80).toLowerCase().replace(/[^a-z0-9_-]/g, '');
     if (!safeRoomId) return;
 
@@ -620,8 +621,9 @@ io.on('connection', (socket) => {
     }
 
     currentRoomId = safeRoomId;
-    username      = String(user  || 'Гость').slice(0, 40).replace(/[<>]/g, '');
-    userAvatar    = String(avatar || 'avatar-1').slice(0, 300_000); 
+    username      = identity.username;
+    userAvatar    = identity.avatar;
+    auth.bumpSessions(identity.id);
 
     socket.join(currentRoomId);
 

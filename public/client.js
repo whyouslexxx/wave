@@ -62,6 +62,7 @@ function debugLog(msg) {
 
 
 const socket = io({
+  autoConnect:       false,   // подключаемся только после входа в аккаунт
   reconnection:      true,
   reconnectionDelay: 1000,
   reconnectionDelayMax: 30000,
@@ -95,7 +96,13 @@ socket.on('connect', () => {
   }
 });
 
-socket.on('connect_error', () => {
+socket.on('connect_error', (err) => {
+  if (err && err.message === 'AUTH_REQUIRED') {
+    socket.disconnect();
+    leaveRoomUi();
+    showAuthScreen('Сессия истекла — войдите снова');
+    return;
+  }
   if (roomId && !_reconnecting) {
     _reconnecting = true;
     _showReconnectingBanner();
@@ -113,7 +120,6 @@ function resetScrollPosition() {
 function _goToLobbyOnDisconnect() {
   _reconnecting = false;
   _hideReconnectingBanner();
-  username = '';
   roomId   = '';
   currentVideo = null;
   hasUserActivated = false;
@@ -354,7 +360,6 @@ const html5Player = document.getElementById('html5-player');
 const lobbyScreen = document.getElementById('lobby-screen');
 const roomScreen = document.getElementById('room-screen');
 const lobbyForm = document.getElementById('lobby-form');
-const usernameInput = document.getElementById('username-input');
 const roomInput = document.getElementById('room-input');
 const btnRandomRoom = document.getElementById('btn-random-room');
 const roomNameDisplay = document.getElementById('room-name-display');
@@ -397,24 +402,6 @@ btnRandomRoom.addEventListener('click', () => {
   roomInput.value = `${word1}-${word2}-${num}`;
 });
 
-
-const PROFILE_KEY = 'wave_profile_v1';
-
-function saveProfile() {
-  try {
-    localStorage.setItem(PROFILE_KEY, JSON.stringify({
-      username: username,
-      avatarData: avatarData
-    }));
-  } catch(e) {}
-}
-
-function loadSavedProfile() {
-  try {
-    const raw = localStorage.getItem(PROFILE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch(e) { return null; }
-}
 
 let pendingInitialVideo = null;
 let selectedVideoForModal = null;
@@ -635,67 +622,7 @@ function switchToGridHub() {
   renderLobbyVideoGrid();
 }
 
-function clearProfile() {
-  localStorage.removeItem(PROFILE_KEY);
-  username = '';
-  avatarData = null;
-  selectedAvatarId = 'avatar-1';
-  usernameInput.value = '';
-
-  const previewImg = document.getElementById('avatar-preview-img');
-  if (previewImg) {
-    previewImg.src = '';
-    previewImg.style.display = 'none';
-  }
-  document.getElementById('avatar-letter-canvas').style.display = 'none';
-  document.getElementById('avatar-upload-circle').classList.remove('has-image');
-  document.getElementById('btn-remove-avatar').style.display = 'none';
-
-  const lobbyScreen = document.getElementById('lobby-screen');
-  const wizardCard = document.getElementById('lobby-wizard-card');
-  const gridHub = document.getElementById('lobby-grid-hub');
-
-  if (lobbyScreen) lobbyScreen.classList.remove('grid-mode');
-  if (wizardCard) wizardCard.style.display = 'block';
-  if (gridHub) gridHub.style.display = 'none';
-
-  document.querySelectorAll('.wizard-stage').forEach(s => s.classList.remove('active'));
-  document.getElementById('stage-nickname').classList.add('active');
-}
-
-function applyProfile(profile) {
-  username = profile.username;
-  avatarData = profile.avatarData;
-  selectedAvatarId = avatarData || selectedAvatarId;
-  usernameInput.value = username;
-
-  const thumb = document.getElementById('saved-profile-avatar-thumb');
-  if (thumb) {
-    if (avatarData) {
-      const img = document.createElement('img');
-      img.src = avatarData;
-      img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
-      thumb.innerHTML = '';
-      thumb.appendChild(img);
-
-      const previewImg = document.getElementById('avatar-preview-img');
-      if (previewImg) {
-        previewImg.src = avatarData;
-        previewImg.style.display = 'block';
-      }
-      document.getElementById('avatar-upload-circle').classList.add('has-image');
-      document.getElementById('btn-remove-avatar').style.display = 'flex';
-    } else {
-      thumb.innerHTML = `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.1rem;color:#fff;background:linear-gradient(135deg,#8b5cf6,#ec4899)">${username.charAt(0).toUpperCase()}</div>`;
-    }
-  }
-  document.getElementById('saved-profile-name-label').textContent = username;
-  switchToGridHub();
-}
-
-
 function submitLobby() {
-  username = usernameInput.value.trim() || username;
   roomId = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
 
   if (!username || !roomId) {
@@ -703,10 +630,6 @@ function submitLobby() {
     return;
   }
 
-  
-  saveProfile();
-
-  
   window.location.hash = roomId;
 
   
@@ -1001,43 +924,6 @@ function generateLetterAvatar(name) {
   avatarData = canvas.toDataURL();
 }
 
-const btnWizardNext1 = document.getElementById('btn-wizard-next-1');
-if (btnWizardNext1) {
-  btnWizardNext1.addEventListener('click', (e) => {
-    if (e) e.preventDefault();
-    const nick = usernameInput ? usernameInput.value.trim() : '';
-    if (!nick) {
-      alert('Пожалуйста, введите ваше имя!');
-      return;
-    }
-    username = nick;
-    try {
-      if (!avatarData) {
-        generateLetterAvatar(username);
-      }
-    } catch(err) {
-      console.warn('Avatar gen error', err);
-    }
-    selectedAvatarId = avatarData || selectedAvatarId;
-    saveProfile();
-    switchToGridHub();
-  });
-}
-
-document.getElementById('btn-wizard-back-2').onclick = () => {
-  document.getElementById('stage-avatar').classList.remove('active');
-  document.getElementById('stage-nickname').classList.add('active');
-};
-
-document.getElementById('btn-wizard-next-2').onclick = () => {
-  if (!avatarData) {
-    generateLetterAvatar(username);
-  }
-  selectedAvatarId = avatarData || selectedAvatarId;
-  saveProfile();
-  switchToGridHub();
-};
-
 document.getElementById('btn-wizard-submit').onclick = () => {
   const modal = document.getElementById('join-room-modal');
   if (modal) modal.style.display = 'none';
@@ -1186,13 +1072,6 @@ if (createVideoRoomInput) {
 }
 
 
-usernameInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    document.getElementById('btn-wizard-next-1').click();
-  }
-});
-
 roomInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
@@ -1232,7 +1111,12 @@ if (btnToggleSidebar) {
 function leaveRoom() {
   if (!roomId) return;
   socket.emit('leave-room');
+  leaveRoomUi();
+}
+
+function leaveRoomUi() {
   roomId = '';
+  hasUserActivated = false;
   history.pushState("", document.title, window.location.pathname + window.location.search);
   try { playerManager.destroy(); } catch (e) {}
   resetScrollPosition();
@@ -3355,18 +3239,224 @@ window.addEventListener('touchmove', (e) => {
 initAvatarPicker();
 initCropModal();
 
-
-const _savedProfile = loadSavedProfile();
-if (_savedProfile && _savedProfile.username) {
-  applyProfile(_savedProfile);
+// ── Авторизация ─────────────────────────────────────────────────────────────
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin'
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || 'Что-то пошло не так');
+    err.status = res.status;
+    err.field = data.field;
+    throw err;
+  }
+  return data;
 }
 
+const authEls = {
+  tabs:        document.querySelectorAll('.auth-tab'),
+  form:        document.getElementById('auth-form'),
+  username:    document.getElementById('auth-username'),
+  password:    document.getElementById('auth-password'),
+  confirm:     document.getElementById('auth-confirm'),
+  confirmGrp:  document.getElementById('auth-confirm-group'),
+  toggle:      document.getElementById('auth-toggle-pass'),
+  meter:       document.getElementById('auth-meter'),
+  error:       document.getElementById('auth-error'),
+  submit:      document.getElementById('auth-submit'),
+  submitLabel: document.getElementById('auth-submit-label')
+};
+let authMode = 'login';
+let registeredUser = null;
 
-document.getElementById('btn-logout').addEventListener('click', () => {
-  if (confirm('Сбросить профиль и начать заново?')) {
-    clearProfile();
+function setFieldError(name, message) {
+  const input = { username: authEls.username, password: authEls.password, confirm: authEls.confirm }[name];
+  const el = document.getElementById(`auth-${name}-error`);
+  if (input) input.classList.toggle('invalid', !!message);
+  if (el) { el.textContent = message || ''; el.hidden = !message; }
+}
+function clearAuthErrors() {
+  ['username', 'password', 'confirm'].forEach(n => setFieldError(n, ''));
+  authEls.error.hidden = true;
+}
+function showAuthError(message, kind) {
+  authEls.error.textContent = message;
+  authEls.error.classList.toggle('ok', kind === 'ok');
+  authEls.error.hidden = false;
+  if (kind !== 'ok') {
+    authEls.form.classList.remove('auth-shake');
+    void authEls.form.offsetWidth;
+    authEls.form.classList.add('auth-shake');
+  }
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const reg = mode === 'register';
+  authEls.tabs.forEach(t => {
+    const on = t.dataset.mode === mode;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  });
+  authEls.confirmGrp.hidden = !reg;
+  authEls.meter.hidden = !reg;
+  authEls.password.autocomplete = reg ? 'new-password' : 'current-password';
+  authEls.submitLabel.textContent = reg ? 'Создать аккаунт' : 'Войти';
+  authEls.confirm.value = '';
+  clearAuthErrors();
+}
+
+function passwordScore(pw) {
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12 || (/[a-zа-яё]/.test(pw) && /[A-ZА-ЯЁ]/.test(pw))) score++;
+  if (/\d/.test(pw) && /[^\p{L}\d]/u.test(pw)) score++;
+  return Math.min(3, Math.max(pw.length ? 1 : 0, score));
+}
+
+authEls.tabs.forEach(t => t.addEventListener('click', () => setAuthMode(t.dataset.mode)));
+[['username', authEls.username], ['password', authEls.password], ['confirm', authEls.confirm]].forEach(([name, el]) => {
+  el.addEventListener('input', () => { setFieldError(name, ''); authEls.error.hidden = true; });
+});
+authEls.password.addEventListener('input', () => {
+  const level = passwordScore(authEls.password.value);
+  authEls.meter.dataset.level = level;
+  authEls.meter.firstElementChild.style.width = (level * 33.4) + '%';
+});
+authEls.toggle.addEventListener('click', () => {
+  const show = authEls.password.type === 'password';
+  authEls.password.type = show ? 'text' : 'password';
+  authEls.confirm.type = authEls.password.type;
+  authEls.toggle.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
+  authEls.toggle.firstElementChild.className = show ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye';
+});
+
+authEls.form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearAuthErrors();
+  const name = authEls.username.value.trim();
+  const pass = authEls.password.value;
+  const reg = authMode === 'register';
+
+  let bad = false;
+  if (!/^[\p{L}\p{N}_.-]{3,24}$/u.test(name)) {
+    setFieldError('username', 'От 3 до 24 символов: буквы, цифры, «_», «.» или «-»'); bad = true;
+  }
+  if (pass.length < (reg ? 8 : 1)) {
+    setFieldError('password', reg ? 'Минимум 8 символов' : 'Введите пароль'); bad = true;
+  }
+  if (reg && authEls.confirm.value !== pass) {
+    setFieldError('confirm', 'Пароли не совпадают'); bad = true;
+  }
+  if (bad) { authEls.form.classList.remove('auth-shake'); void authEls.form.offsetWidth; authEls.form.classList.add('auth-shake'); return; }
+
+  authEls.submit.disabled = true;
+  authEls.submitLabel.textContent = reg ? 'Создаём…' : 'Входим…';
+  try {
+    const { user } = await api('POST', reg ? '/api/auth/register' : '/api/auth/login', { username: name, password: pass });
+    authEls.password.value = '';
+    authEls.confirm.value = '';
+    if (reg) {
+      registeredUser = user;
+      username = user.username;
+      document.querySelectorAll('.wizard-stage').forEach(s => s.classList.remove('active'));
+      document.getElementById('stage-avatar').classList.add('active');
+    } else {
+      applyUser(user);
+    }
+  } catch (err) {
+    if (err.field) setFieldError(err.field, err.message);
+    else showAuthError(err.message);
+  } finally {
+    authEls.submit.disabled = false;
+    authEls.submitLabel.textContent = authMode === 'register' ? 'Создать аккаунт' : 'Войти';
   }
 });
+
+// Шаг «фото» после регистрации
+async function finishRegistration(withAvatar) {
+  const user = registeredUser;
+  registeredUser = null;
+  if (!user) return showAuthScreen();
+  if (withAvatar && avatarData && avatarData.startsWith('data:image/')) {
+    try { user.avatar = (await api('PUT', '/api/profile', { avatar: avatarData })).user.avatar; }
+    catch (err) { alert('Аккаунт создан, но фото не сохранилось: ' + err.message); }
+  }
+  applyUser(user);
+}
+document.getElementById('btn-wizard-back-2').onclick = () => finishRegistration(false);
+document.getElementById('btn-wizard-next-2').onclick = () => finishRegistration(true);
+
+function applyUser(user) {
+  username = user.username;
+  avatarData = user.avatar || null;
+  selectedAvatarId = avatarData || 'avatar-1';
+  document.body.classList.remove('auth-pending');
+  if (!socket.connected) socket.connect();
+  switchToGridHub();
+  if (window.location.hash && !roomId) {
+    roomInput.value = window.location.hash.substring(1);
+    const joinModalEl = document.getElementById('join-room-modal');
+    if (joinModalEl) joinModalEl.style.display = 'flex';
+  }
+  window.dispatchEvent(new CustomEvent('wave:user', { detail: user }));
+}
+
+function resetAvatarPickerUi() {
+  const previewImg = document.getElementById('avatar-preview-img');
+  if (previewImg) { previewImg.removeAttribute('src'); previewImg.style.display = 'none'; }
+  document.getElementById('avatar-letter-canvas').style.display = 'none';
+  document.getElementById('avatar-upload-circle').classList.remove('has-image');
+  document.getElementById('btn-remove-avatar').style.display = 'none';
+}
+
+function showAuthScreen(message) {
+  username = '';
+  avatarData = null;
+  selectedAvatarId = 'avatar-1';
+  registeredUser = null;
+  resetAvatarPickerUi();
+  document.body.classList.remove('auth-pending');
+  if (socket.connected || socket.active) socket.disconnect();
+
+  lobbyScreen.classList.add('active');
+  roomScreen.classList.remove('active');
+  lobbyScreen.classList.remove('grid-mode');
+  document.getElementById('lobby-wizard-card').style.display = '';
+  document.getElementById('lobby-grid-hub').style.display = 'none';
+  document.querySelectorAll('.wizard-stage').forEach(s => s.classList.remove('active'));
+  document.getElementById('stage-auth').classList.add('active');
+  setAuthMode('login');
+  if (message) showAuthError(message);
+  window.dispatchEvent(new CustomEvent('wave:user', { detail: null }));
+}
+
+async function logout() {
+  try { await api('POST', '/api/auth/logout'); } catch (e) { /* всё равно выходим локально */ }
+  showAuthScreen();
+}
+window.waveLogout = logout;
+
+async function bootAuth() {
+  try {
+    const { user } = await api('GET', '/api/auth/me');
+    applyUser(user);
+  } catch (err) {
+    showAuthScreen();
+  }
+}
+
+document.getElementById('btn-logout').addEventListener('click', () => {
+  if (confirm('Выйти из аккаунта?')) logout();
+});
+
+
+
+bootAuth();
 
 
 document.addEventListener('visibilitychange', () => {
