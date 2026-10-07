@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=51">
+  <link rel="stylesheet" href="style.css?v=53">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="auth-pending">
@@ -105,14 +105,19 @@
           <div class="logo">
             <img src="logo.png?v=3" alt="Wave" class="logo-img">
           </div>
-          <button type="button" id="btn-quick-create" class="btn-topbar-action primary">
-            <i class="fa-solid fa-plus"></i><span>Создать комнату</span>
-          </button>
-          <button type="button" id="btn-open-join-modal" class="btn-topbar-action secondary">
-            <i class="fa-solid fa-door-open"></i><span>Войти по коду</span>
-          </button>
+          <div class="create-split">
+            <button type="button" id="btn-quick-create" class="btn-topbar-action primary">
+              <i class="fa-solid fa-plus"></i><span>Создать комнату</span>
+            </button>
+            <button type="button" id="btn-create-options" class="btn-topbar-action primary create-split-more" title="Создать с настройками" aria-label="Создать с настройками">
+              <i class="fa-solid fa-sliders"></i>
+            </button>
+          </div>
         </div>
         <div class="topbar-right">
+          <button type="button" id="btn-open-friends" class="btn-topbar-action secondary friends-btn" title="Друзья">
+            <i class="fa-solid fa-user-group"></i><span>Друзья</span><span id="friends-badge" class="count-badge" hidden>0</span>
+          </button>
           <div class="saved-profile-group">
             <div class="saved-profile-btn" id="saved-profile-bar" title="Редактировать профиль">
               <div class="saved-profile-avatar" id="saved-profile-avatar-thumb"></div>
@@ -126,6 +131,22 @@
       </header>
 
       <div class="grid-content-area">
+        <section class="rooms-hub">
+          <form id="join-bar" class="join-bar" autocomplete="off">
+            <i class="fa-solid fa-link join-bar-icon"></i>
+            <input type="text" id="join-input" placeholder="Вставьте ссылку-приглашение или код комнаты" spellcheck="false" autocapitalize="off">
+            <button type="submit" class="btn-primary join-bar-btn">Войти <i class="fa-solid fa-arrow-right"></i></button>
+          </form>
+          <div id="my-rooms-section" class="rooms-section" hidden>
+            <h3 class="rooms-section-title"><i class="fa-regular fa-clock"></i> Мои комнаты</h3>
+            <div id="my-rooms" class="room-cards"></div>
+          </div>
+          <div id="public-rooms-section" class="rooms-section" hidden>
+            <h3 class="rooms-section-title"><i class="fa-solid fa-tower-broadcast"></i> Сейчас смотрят</h3>
+            <div id="public-rooms" class="room-cards"></div>
+          </div>
+        </section>
+
         <div class="grid-header-title">
           <div class="grid-title-row">
             <h2><i class="fa-solid fa-fire text-gradient"></i> Рекомендуемые видео</h2>
@@ -149,58 +170,6 @@
   
 
   
-  <div id="create-room-modal" class="modal-backdrop" style="display:none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3><i class="fa-solid fa-plus"></i> Создать комнату</h3>
-        <button type="button" id="btn-close-create-room-modal" class="btn-modal-close">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div class="input-group">
-          <label for="create-room-code-input">Код комнаты</label>
-          <div class="room-input-container">
-            <input type="text" id="create-room-code-input" placeholder="Например: wave-777" autocomplete="off">
-            <button type="button" id="btn-random-create-room" title="Случайный код">
-              <i class="fa-solid fa-dice"></i>
-            </button>
-          </div>
-        </div>
-        <button type="button" id="btn-submit-create-room" class="btn-primary btn-full">
-          Создать комнату <i class="fa-solid fa-arrow-right"></i>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  
-  <div id="join-room-modal" class="modal-backdrop" style="display:none;">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3><i class="fa-solid fa-door-open"></i> Войти в комнату</h3>
-        <button type="button" id="btn-close-join-modal" class="btn-modal-close">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div class="input-group">
-          <label for="room-input">Код комнаты</label>
-          <div class="room-input-container">
-            <input type="text" id="room-input" placeholder="Введите код комнаты" autocomplete="off">
-            <button type="button" id="btn-random-room" title="Случайный код">
-              <i class="fa-solid fa-dice"></i>
-            </button>
-          </div>
-        </div>
-        <button type="button" id="btn-wizard-submit" class="btn-primary btn-full">
-          Войти <i class="fa-solid fa-arrow-right-to-bracket"></i>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  
   <div id="create-with-video-modal" class="modal-backdrop" style="display:none;">
     <div class="modal-card">
       <div class="modal-header">
@@ -217,15 +186,6 @@
             <div id="modal-video-title" class="modal-video-title"></div>
           </div>
         </div>
-        <div class="input-group">
-          <label for="create-video-room-input">Код комнаты</label>
-          <div class="room-input-container">
-            <input type="text" id="create-video-room-input" placeholder="Например: room-777" autocomplete="off">
-            <button type="button" id="btn-random-create-video-room" title="Случайный код">
-              <i class="fa-solid fa-dice"></i>
-            </button>
-          </div>
-        </div>
         <button type="button" id="btn-submit-create-video-room" class="btn-primary btn-full">
           Смотреть вместе <i class="fa-solid fa-arrow-right"></i>
         </button>
@@ -234,6 +194,90 @@
   </div>
 
   
+
+  <div id="room-config-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="room-config-title"><i class="fa-solid fa-sliders"></i> Новая комната</h3>
+        <button type="button" id="btn-close-room-config" class="btn-modal-close" aria-label="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="room-config-form" class="modal-body" novalidate autocomplete="off">
+        <div class="input-group">
+          <label for="rc-title">Название <span class="opt">необязательно</span></label>
+          <input type="text" id="rc-title" maxlength="60" placeholder="Например, Киновечер">
+        </div>
+        <div class="input-group">
+          <label>Кто может найти комнату</label>
+          <div class="segmented" id="rc-visibility" role="radiogroup">
+            <button type="button" class="seg active" data-value="unlisted"><i class="fa-solid fa-link"></i> По ссылке</button>
+            <button type="button" class="seg" data-value="public"><i class="fa-solid fa-earth-europe"></i> Публичная</button>
+          </div>
+          <p class="field-hint" id="rc-visibility-hint">Зайти можно только по коду или приглашению.</p>
+        </div>
+        <div class="input-group">
+          <label>Кто управляет видео</label>
+          <div class="segmented" id="rc-control" role="radiogroup">
+            <button type="button" class="seg active" data-value="all"><i class="fa-solid fa-users"></i> Все</button>
+            <button type="button" class="seg" data-value="host"><i class="fa-solid fa-crown"></i> Только хозяин</button>
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="rc-password"><i class="fa-solid fa-lock"></i> Пароль <span class="opt" id="rc-password-opt">необязательно</span></label>
+          <div class="password-field">
+            <input type="password" id="rc-password" maxlength="128" placeholder="Без пароля" autocomplete="new-password">
+            <button type="button" class="password-toggle" id="rc-toggle-pass" aria-label="Показать пароль" tabindex="-1"><i class="fa-regular fa-eye"></i></button>
+          </div>
+          <label class="check-row" id="rc-clear-row" hidden><input type="checkbox" id="rc-clear-password"> Убрать пароль</label>
+        </div>
+        <div class="input-group" id="rc-code-group">
+          <label for="rc-code">Свой код <span class="opt">необязательно</span></label>
+          <input type="text" id="rc-code" maxlength="40" placeholder="Сгенерируем сами" spellcheck="false" autocapitalize="off">
+        </div>
+        <div class="auth-error" id="rc-error" role="alert" hidden></div>
+        <button type="submit" id="rc-submit" class="btn-primary btn-full"><span id="rc-submit-label">Создать и войти</span> <i class="fa-solid fa-arrow-right"></i></button>
+      </form>
+    </div>
+  </div>
+
+  <div id="room-password-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-lock"></i> Комната защищена</h3>
+        <button type="button" id="btn-close-room-password" class="btn-modal-close" aria-label="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="room-password-form" class="modal-body" novalidate>
+        <p class="field-hint" id="rp-room-label"></p>
+        <div class="input-group">
+          <label for="rp-password">Пароль</label>
+          <input type="password" id="rp-password" maxlength="128" placeholder="Введите пароль" autocomplete="off">
+        </div>
+        <div class="auth-error" id="rp-error" role="alert" hidden></div>
+        <button type="submit" class="btn-primary btn-full">Войти <i class="fa-solid fa-arrow-right-to-bracket"></i></button>
+      </form>
+    </div>
+  </div>
+
+  <div id="friends-backdrop" class="profile-backdrop"></div>
+  <aside id="friends-panel" class="profile-panel friends-panel" aria-label="Друзья">
+    <div class="profile-panel-header">
+      <h2>Друзья</h2>
+      <button id="btn-close-friends" class="btn-modal-close" aria-label="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="friend-add-form" class="friend-add" autocomplete="off">
+      <input type="text" id="friend-add-input" placeholder="Имя пользователя" maxlength="24" spellcheck="false" autocapitalize="off">
+      <button type="submit" class="btn-primary friend-add-btn"><i class="fa-solid fa-user-plus"></i></button>
+    </form>
+    <div class="auth-error" id="friend-msg" role="status" hidden></div>
+    <div class="friends-scroll" id="friends-scroll"></div>
+  </aside>
+
+  <div id="invite-popover" class="invite-popover" hidden>
+    <div class="invite-popover-title">Пригласить друга</div>
+    <div id="invite-list" class="invite-list"></div>
+  </div>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
   <div id="avatar-crop-modal" class="avatar-crop-modal" style="display:none;">
     <div class="avatar-crop-container">
       <div class="avatar-crop-header">
@@ -270,6 +314,14 @@
         </div>
         <button id="btn-copy-link" class="btn-secondary btn-sm">
           <i class="fa-solid fa-share-nodes"></i> Поделиться
+        </button>
+        <button id="btn-invite-friend" class="btn-secondary btn-sm" title="Пригласить друга">
+          <i class="fa-solid fa-user-plus"></i> <span class="btn-label">Пригласить</span>
+        </button>
+        <span id="room-chip-lock" class="room-chip" title="Комната с паролем" hidden><i class="fa-solid fa-lock"></i></span>
+        <span id="room-chip-host" class="room-chip" hidden><i class="fa-solid fa-crown"></i> <span id="room-chip-host-name"></span></span>
+        <button id="btn-room-settings" class="btn-secondary btn-sm" title="Настройки комнаты" hidden>
+          <i class="fa-solid fa-gear"></i>
         </button>
       </div>
       <div class="room-navbar-right">
@@ -503,7 +555,8 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://vk.com/js/api/videoplayer.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
-  <script src="client.js?v=112"></script>
+  <script src="client.js?v=113"></script>
   <script src="profile.js?v=112"></script>
+  <script src="rooms.js?v=1"></script>
 </body>
 </html>

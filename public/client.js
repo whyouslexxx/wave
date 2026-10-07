@@ -359,9 +359,6 @@ const html5Player = document.getElementById('html5-player');
 
 const lobbyScreen = document.getElementById('lobby-screen');
 const roomScreen = document.getElementById('room-screen');
-const lobbyForm = document.getElementById('lobby-form');
-const roomInput = document.getElementById('room-input');
-const btnRandomRoom = document.getElementById('btn-random-room');
 const roomNameDisplay = document.getElementById('room-name-display');
 const btnCopyLink = document.getElementById('btn-copy-link');
 const btnRoomLogoHome = document.getElementById('btn-room-logo-home');
@@ -389,18 +386,6 @@ const tokenModal = document.getElementById('token-modal');
 const btnCloseModal = document.getElementById('btn-close-modal');
 
 
-if (window.location.hash) {
-  roomInput.value = window.location.hash.substring(1);
-}
-
-
-btnRandomRoom.addEventListener('click', () => {
-  const words = ['kino', 'film', 'love', 'date', 'watch', 'wave', 'stream', 'sweet', 'chill', 'popcorn'];
-  const num = Math.floor(Math.random() * 9000) + 1000;
-  const word1 = words[Math.floor(Math.random() * words.length)];
-  const word2 = words[Math.floor(Math.random() * words.length)];
-  roomInput.value = `${word1}-${word2}-${num}`;
-});
 
 
 let pendingInitialVideo = null;
@@ -678,33 +663,31 @@ function switchToGridHub() {
   renderLobbyVideoGrid();
 }
 
-function submitLobby() {
-  roomId = roomInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+// Вход в комнату: UI переключается только после ответа сервера (комната может быть с паролем).
+let pendingJoin = null;
 
-  if (!username || !roomId) {
-    alert('Пожалуйста, введите ваше имя и ID комнаты!');
-    return;
-  }
+function enterRoom(rawCode, opts = {}) {
+  const id = String(rawCode || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!id || !username) return false;
+  pendingJoin = { id, video: opts.video || null };
+  socket.emit('join-room', { roomId: id, password: opts.password });
+  return true;
+}
 
-  window.location.hash = roomId;
-
-  
+socket.on('room-status', () => {
+  if (!pendingJoin) return;
+  const { id, video } = pendingJoin;
+  pendingJoin = null;
+  roomId = id;
+  window.location.hash = id;
   resetScrollPosition();
   lobbyScreen.classList.remove('active');
   roomScreen.classList.add('active');
-  roomNameDisplay.textContent = roomId;
+  roomNameDisplay.textContent = id;
+  if (video) setTimeout(() => socket.emit('video-change', video), 300);
+});
 
-  
-  socket.emit('join-room', { roomId, user: username, avatar: avatarData || selectedAvatarId });
-
-  
-  if (pendingInitialVideo) {
-    setTimeout(() => {
-      socket.emit('video-change', pendingInitialVideo);
-      pendingInitialVideo = null;
-    }, 300);
-  }
-}
+socket.on('room-error', () => { pendingJoin = null; });
 
 let selectedAvatarId = 'avatar-1';
 let avatarData = null;
@@ -979,162 +962,6 @@ function generateLetterAvatar(name) {
   document.getElementById('avatar-upload-circle').classList.remove('has-image');
   avatarData = canvas.toDataURL();
 }
-
-document.getElementById('btn-wizard-submit').onclick = () => {
-  const modal = document.getElementById('join-room-modal');
-  if (modal) modal.style.display = 'none';
-  submitLobby();
-};
-
-
-const btnQuickCreate = document.getElementById('btn-quick-create');
-const createRoomModal = document.getElementById('create-room-modal');
-const btnCloseCreateRoomModal = document.getElementById('btn-close-create-room-modal');
-const btnRandomCreateRoom = document.getElementById('btn-random-create-room');
-const btnSubmitCreateRoom = document.getElementById('btn-submit-create-room');
-const createRoomCodeInput = document.getElementById('create-room-code-input');
-
-if (btnQuickCreate && createRoomModal) {
-  btnQuickCreate.onclick = () => {
-    if (createRoomCodeInput) {
-      createRoomCodeInput.value = 'wave-' + Math.floor(1000 + Math.random() * 9000);
-    }
-    createRoomModal.style.display = 'flex';
-  };
-}
-
-if (btnCloseCreateRoomModal && createRoomModal) {
-  btnCloseCreateRoomModal.onclick = () => {
-    createRoomModal.style.display = 'none';
-  };
-}
-
-if (createRoomModal) {
-  createRoomModal.addEventListener('click', (e) => {
-    if (e.target === createRoomModal) {
-      createRoomModal.style.display = 'none';
-    }
-  });
-}
-
-if (btnRandomCreateRoom && createRoomCodeInput) {
-  btnRandomCreateRoom.onclick = () => {
-    createRoomCodeInput.value = 'wave-' + Math.floor(1000 + Math.random() * 9000);
-  };
-}
-
-function submitCreateRoom() {
-  if (!createRoomCodeInput) return;
-  const roomCode = createRoomCodeInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  if (!roomCode) {
-    alert('Пожалуйста, введите код комнаты!');
-    return;
-  }
-  roomInput.value = roomCode;
-  if (createRoomModal) createRoomModal.style.display = 'none';
-  submitLobby();
-}
-
-if (btnSubmitCreateRoom) {
-  btnSubmitCreateRoom.onclick = submitCreateRoom;
-}
-
-if (createRoomCodeInput) {
-  createRoomCodeInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submitCreateRoom();
-    }
-  });
-}
-
-
-const btnOpenJoinModal = document.getElementById('btn-open-join-modal');
-const joinModal = document.getElementById('join-room-modal');
-const btnCloseJoinModal = document.getElementById('btn-close-join-modal');
-
-if (btnOpenJoinModal && joinModal) {
-  btnOpenJoinModal.onclick = () => {
-    joinModal.style.display = 'flex';
-  };
-}
-
-if (btnCloseJoinModal && joinModal) {
-  btnCloseJoinModal.onclick = () => {
-    joinModal.style.display = 'none';
-  };
-}
-
-
-if (joinModal) {
-  joinModal.addEventListener('click', (e) => {
-    if (e.target === joinModal) {
-      joinModal.style.display = 'none';
-    }
-  });
-}
-
-
-const createVideoModal = document.getElementById('create-with-video-modal');
-const btnCloseCreateVideoModal = document.getElementById('btn-close-create-video-modal');
-const btnRandomCreateVideoRoom = document.getElementById('btn-random-create-video-room');
-const btnSubmitCreateVideoRoom = document.getElementById('btn-submit-create-video-room');
-const createVideoRoomInput = document.getElementById('create-video-room-input');
-
-if (btnCloseCreateVideoModal && createVideoModal) {
-  btnCloseCreateVideoModal.onclick = () => {
-    createVideoModal.style.display = 'none';
-  };
-}
-
-if (createVideoModal) {
-  createVideoModal.addEventListener('click', (e) => {
-    if (e.target === createVideoModal) {
-      createVideoModal.style.display = 'none';
-    }
-  });
-}
-
-if (btnRandomCreateVideoRoom && createVideoRoomInput) {
-  btnRandomCreateVideoRoom.onclick = () => {
-    createVideoRoomInput.value = 'room-' + Math.floor(100 + Math.random() * 900);
-  };
-}
-
-function submitCreateWithVideoRoom() {
-  if (!createVideoRoomInput) return;
-  const roomCode = createVideoRoomInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  if (!roomCode) {
-    alert('Пожалуйста, введите код комнаты!');
-    return;
-  }
-  roomInput.value = roomCode;
-  pendingInitialVideo = selectedVideoForModal;
-  if (createVideoModal) createVideoModal.style.display = 'none';
-  submitLobby();
-}
-
-if (btnSubmitCreateVideoRoom) {
-  btnSubmitCreateVideoRoom.onclick = submitCreateWithVideoRoom;
-}
-
-if (createVideoRoomInput) {
-  createVideoRoomInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submitCreateWithVideoRoom();
-    }
-  });
-}
-
-
-roomInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    submitLobby();
-  }
-});
-
 
 btnCopyLink.addEventListener('click', () => {
   const inviteUrl = `${window.location.origin}/#${roomId}`;
@@ -3458,11 +3285,6 @@ function applyUser(user) {
   document.body.classList.remove('auth-pending');
   if (!socket.connected) socket.connect();
   switchToGridHub();
-  if (window.location.hash && !roomId) {
-    roomInput.value = window.location.hash.substring(1);
-    const joinModalEl = document.getElementById('join-room-modal');
-    if (joinModalEl) joinModalEl.style.display = 'flex';
-  }
   window.dispatchEvent(new CustomEvent('wave:user', { detail: user }));
 }
 
