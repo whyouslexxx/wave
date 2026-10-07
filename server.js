@@ -208,26 +208,179 @@ app.get('/api/ytavatar/:id', async (req, res) => {
 });
 
 
+// ── Резолвер страниц: «ссылка на страницу с видео» → прямой поток ──────────
+const MEDIA_URL_RE = /https?:\/\/[^\s"'<>\\()]+?\.(m3u8|mp4|webm)(?:\?[^\s"'<>\\()]*)?/gi;
+const EMBED_HOST_RE = /^(?:[\w-]+\.)*(?:youtube\.com|youtu\.be|rutube\.ru|vk\.com|vk\.ru|vkvideo\.ru)$/i;
+const MAX_PAGE_BYTES = 3 * 1024 * 1024;
+
+function isPrivateHost(hostname) {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  if (/^(?:127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(h)) return true;
+  if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
+  if (h === '::1' || h === '::' || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h) || h.startsWith('::ffff:')) return true;
+  return false;
+}
+
+function parsePublicUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  if (isPrivateHost(u.hostname)) return null;
+  return u;
+}
+
+function fetchPage(url, referer, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const u = parsePublicUrl(url);
+    if (!u) return reject(new Error('blocked url'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.get(u, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ru,en;q=0.8',
+        'Referer': referer || `${u.protocol}//${u.host}/`
+      },
+      timeout: 12000
+    }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        if (redirects >= 5) return reject(new Error('too many redirects'));
+        return resolve(fetchPage(new URL(res.headers.location, u).href, referer, redirects + 1));
+      }
+      const chunks = [];
+      let size = 0;
+      res.on('data', c => {
+        size += c.length;
+        if (size > MAX_PAGE_BYTES) { req.destroy(); return reject(new Error('page too large')); }
+        chunks.push(c);
+      });
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        contentType: res.headers['content-type'] || '',
+        finalUrl: u.href,
+        body: Buffer.concat(chunks).toString('utf8')
+      }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function unescapeJsString(s) {
+  return s
+    .replace(/\\u0026/gi, '&').replace(/&amp;/g, '&')
+    .replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+}
+
+// Достаёт из HTML/JS все кандидаты: потоки, <video>/<source>, og:video, iframe.
+function extractCandidates(html, baseUrl) {
+  const text = unescapeJsString(html);
+  const media = [];
+  const iframes = [];
+  const seen = new Set();
+  const addMedia = (raw) => {
+    let abs;
+    try { abs = new URL(raw, baseUrl).href; } catch { return; }
+    if (seen.has(abs) || !parsePublicUrl(abs)) return;
+    seen.add(abs);
+    const kind = /\.m3u8(?:\?|$)/i.test(abs) ? 'hls' : 'file';
+    media.push({ kind, url: abs });
+  };
+
+  for (const m of text.matchAll(MEDIA_URL_RE)) addMedia(m[0]);
+
+  for (const m of text.matchAll(/<(?:video|source)\b[^>]*?\ssrc=["']([^"']+)["']/gi)) addMedia(m[1]);
+  for (const m of text.matchAll(/<meta[^>]+(?:property|name)=["']og:video(?::url|:secure_url)?["'][^>]*content=["']([^"']+)["']/gi)) {
+    if (/\.(m3u8|mp4|webm)(?:\?|$)/i.test(m[1])) addMedia(m[1]);
+  }
+  // типичные поля плееров: file: "...", source: "...", hls: "..."
+  for (const m of text.matchAll(/["']?(?:file|src|source|hls|stream|video_url|videoUrl)["']?\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4|webm)[^"']*)["']/gi)) addMedia(m[1]);
+
+  for (const m of text.matchAll(/<iframe\b[^>]*?\ssrc=["']([^"']+)["']/gi)) {
+    try {
+      const abs = new URL(m[1], baseUrl).href;
+      if (!iframes.includes(abs) && parsePublicUrl(abs)) iframes.push(abs);
+    } catch { /* ignore */ }
+  }
+
+  media.sort((a, b) => (a.kind === 'hls' ? 0 : 1) - (b.kind === 'hls' ? 0 : 1));
+  return { media, iframes };
+}
+
+app.get('/api/resolve-video', async (req, res) => {
+  const pageUrl = req.query.url;
+  if (!pageUrl || typeof pageUrl !== 'string' || pageUrl.length > 2048) {
+    return res.status(400).json({ error: 'BAD_URL', message: 'Некорректная ссылка' });
+  }
+  if (!parsePublicUrl(pageUrl)) {
+    return res.status(400).json({ error: 'BAD_URL', message: 'Эта ссылка не поддерживается' });
+  }
+
+  try {
+    const page = await fetchPage(pageUrl);
+    const title = (page.body.match(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
+      || page.body.match(/<title[^>]*>([^<]+)<\/title>/i) || [])[1];
+    const cleanTitle = title ? unescapeJsString(title).replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+
+    let { media, iframes } = extractCandidates(page.body, page.finalUrl);
+    let referer = page.finalUrl;
+
+    // Видео часто лежит в iframe-плеере — заглядываем на один уровень вглубь.
+    if (!media.length) {
+      const embed = iframes.find(f => EMBED_HOST_RE.test(new URL(f).hostname));
+      if (embed) return res.json({ kind: 'embed', url: embed, title: cleanTitle });
+
+      for (const frame of iframes.slice(0, 4)) {
+        try {
+          const sub = await fetchPage(frame, page.finalUrl);
+          const found = extractCandidates(sub.body, sub.finalUrl);
+          if (found.media.length) { media = found.media; referer = sub.finalUrl; break; }
+        } catch (e) {
+          console.warn('[resolve-video] iframe error:', e.message);
+        }
+      }
+    }
+
+    if (!media.length) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Не удалось найти видео на этой странице' });
+    }
+    const best = media[0];
+    res.json({ kind: best.kind, url: best.url, referer, title: cleanTitle });
+  } catch (err) {
+    console.error('[resolve-video] error:', err.message);
+    res.status(502).json({ error: 'FETCH_FAILED', message: 'Не удалось открыть страницу: ' + err.message });
+  }
+});
+
+
 app.get('/api/hls-proxy', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl || typeof targetUrl !== 'string') {
     return res.status(400).send('Missing url parameter');
   }
+  const refParam = typeof req.query.ref === 'string' ? req.query.ref : '';
+  const refQuery = refParam ? `&ref=${encodeURIComponent(refParam)}` : '';
 
   try {
-    const parsedTarget = new URL(targetUrl);
-    const mod = targetUrl.startsWith('https') ? https : http;
+    const parsedTarget = parsePublicUrl(targetUrl);
+    if (!parsedTarget) return res.status(400).send('Invalid URL');
+    const mod = parsedTarget.protocol === 'https:' ? https : http;
 
+    const refUrl = refParam ? parsePublicUrl(refParam) : null;
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': `${parsedTarget.protocol}//${parsedTarget.host}/`,
-      'Origin': `${parsedTarget.protocol}//${parsedTarget.host}`
+      'Referer': refUrl ? refUrl.href : `${parsedTarget.protocol}//${parsedTarget.host}/`,
+      'Origin': refUrl ? refUrl.origin : `${parsedTarget.protocol}//${parsedTarget.host}`
     };
 
     const proxyReq = mod.get(targetUrl, { headers, timeout: 20000 }, (proxyRes) => {
       if ([301, 302, 307, 308].includes(proxyRes.statusCode) && proxyRes.headers.location) {
         const redirectUrl = new URL(proxyRes.headers.location, targetUrl).href;
-        return res.redirect(`/api/hls-proxy?url=${encodeURIComponent(redirectUrl)}`);
+        return res.redirect(`/api/hls-proxy?url=${encodeURIComponent(redirectUrl)}${refQuery}`);
       }
 
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -251,14 +404,14 @@ app.get('/api/hls-proxy', async (req, res) => {
               if (trimmed.includes('URI="')) {
                 return line.replace(/URI="([^"]+)"/, (match, uri) => {
                   const resolved = new URL(uri, targetUrl).href;
-                  return `URI="/api/hls-proxy?url=${encodeURIComponent(resolved)}"`;
+                  return `URI="/api/hls-proxy?url=${encodeURIComponent(resolved)}${refQuery}"`;
                 });
               }
               return line;
             }
             try {
               const resolvedUrl = new URL(trimmed, targetUrl).href;
-              return `/api/hls-proxy?url=${encodeURIComponent(resolvedUrl)}`;
+              return `/api/hls-proxy?url=${encodeURIComponent(resolvedUrl)}${refQuery}`;
             } catch {
               return line;
             }
@@ -468,7 +621,7 @@ io.on('connection', (socket) => {
   socket.on('video-change', async (videoData) => {
     if (!currentRoomId || !rooms[currentRoomId]) return;
     if (!videoData || typeof videoData !== 'object') return;
-    const { type, url, id, playerUrl, title } = videoData;
+    const { type, url, id, playerUrl, title, referer } = videoData;
     if (!type || !['youtube', 'vk', 'rutube', 'direct'].includes(type)) return;
 
     let finalTitle = String(title || '').slice(0, 200);
@@ -490,6 +643,7 @@ io.on('connection', (socket) => {
       url:       String(url       || '').slice(0, 2048),
       id:        String(id        || '').slice(0, 200),
       playerUrl: String(playerUrl || '').slice(0, 2048),
+      referer:   String(referer   || '').slice(0, 2048),
       title:     finalTitle || (type === 'rutube' ? 'Rutube Видео' : '')
     };
     room.isPlaying     = true;

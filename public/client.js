@@ -1813,7 +1813,7 @@ const playerManager = {
       this.initVK(videoData.playerUrl, callback);
     } else if (this.activeType === 'direct') {
       document.getElementById('html5-player-container').classList.add('active');
-      this.initHTML5(videoData.url, callback);
+      this.initHTML5(videoData.url, callback, videoData.referer);
     }
   },
 
@@ -2014,7 +2014,7 @@ const playerManager = {
     };
   },
 
-  initHTML5(url, callback) {
+  initHTML5(url, callback, referer) {
     debugLog("initHTML5 called with url: " + url);
     html5Player.controls = true;
     if (isMobile() && !hasUserActivated) {
@@ -2028,7 +2028,8 @@ const playerManager = {
     }
 
     const isM3u8 = /\.m3u8(?:\?|$)/i.test(url) || url.includes('.m3u8') || url.includes('/x/');
-    const streamSource = (isM3u8 && url.startsWith('http')) ? `/api/hls-proxy?url=${encodeURIComponent(url)}` : url;
+    const refQuery = referer ? `&ref=${encodeURIComponent(referer)}` : '';
+    const streamSource = (isM3u8 && url.startsWith('http')) ? `/api/hls-proxy?url=${encodeURIComponent(url)}${refQuery}` : url;
 
     if (isM3u8 && typeof Hls !== 'undefined' && Hls.isSupported()) {
       debugLog("Using Hls.js to play stream via proxy: " + streamSource);
@@ -2645,23 +2646,60 @@ btnAutoplaySync.addEventListener('click', () => {
 
 
 
-videoLinkForm.addEventListener('submit', (e) => {
+const MEDIA_FILE_RE = /\.(mp4|webm|ogg|m3u8)(?:[?#]|$)/i;
+
+// Ссылка на обычную веб-страницу (не поток и не известный плеер) — нужно вытащить видео на сервере.
+function needsResolve(parsed) {
+  return parsed.type === 'direct' && /^https?:\/\//i.test(parsed.url)
+    && !MEDIA_FILE_RE.test(parsed.url) && !parsed.url.includes('/x/');
+}
+
+async function resolvePageVideo(pageUrl) {
+  const res = await fetch(`/api/resolve-video?url=${encodeURIComponent(pageUrl)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || 'Не удалось получить видео по ссылке');
+  if (data.kind === 'embed') {
+    const embedded = parseVideoInput(data.url);
+    if (embedded && embedded.type !== 'direct') return { ...embedded, title: data.title || '' };
+    throw new Error('Не удалось определить плеер на странице');
+  }
+  return { type: 'direct', url: data.url, id: data.url, referer: data.referer || pageUrl, title: data.title || '' };
+}
+
+let videoSubmitBusy = false;
+videoLinkForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = videoUrlInput.value.trim();
-  if (!input) return;
+  if (!input || videoSubmitBusy) return;
 
-  const parsed = parseVideoInput(input);
-  if (parsed) {
-    socket.emit('video-change', parsed);
-    videoUrlInput.value = '';
-  } else {
-    
+  let parsed = parseVideoInput(input);
+  if (!parsed) {
     if (input.includes('vk.com/video') || input.includes('vk.ru/video')) {
       alert('Внимание! Обычные ссылки на ВК Видео защищены от встраивания.\n\nПожалуйста, скопируйте «Код вставки» из меню «Поделиться» ВК и вставьте его сюда!');
     } else {
-      alert('Неподдерживаемый формат ссылки. Укажите прямую ссылку (.mp4), YouTube, Rutube ссылку или код вставки ВК iframe.');
+      alert('Неподдерживаемый формат ссылки. Укажите ссылку на страницу с видео, прямую ссылку (.mp4/.m3u8), YouTube, Rutube или код вставки ВК iframe.');
+    }
+    return;
+  }
+
+  if (needsResolve(parsed)) {
+    const submitBtn = videoLinkForm.querySelector('button[type="submit"]');
+    videoSubmitBusy = true;
+    const prevHtml = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Ищем видео…'; }
+    try {
+      parsed = await resolvePageVideo(parsed.url);
+    } catch (err) {
+      alert(err.message);
+      return;
+    } finally {
+      videoSubmitBusy = false;
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = prevHtml; }
     }
   }
+
+  socket.emit('video-change', parsed);
+  videoUrlInput.value = '';
 });
 
 function parseVideoInput(input) {
