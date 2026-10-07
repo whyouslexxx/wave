@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Wave — Совместный Просмотр</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=50">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+  
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+
+  
+  <div id="lobby-screen" class="glass-container active">
+
+    
+    <div id="lobby-wizard-card" class="lobby-wizard-card">
+      <div class="lobby-header">
+        <div class="logo">
+          <img src="logo.png?v=3" alt="Wave" class="logo-img">
+        </div>
+        <p class="subtitle">Смотрите любимые видео вместе — в реальном времени</p>
+      </div>
+
+      <div id="lobby-wizard" class="lobby-wizard">
+
+        
+        <div class="wizard-stage active" id="stage-nickname">
+          <div class="input-group">
+            <label for="username-input">
+              <i class="fa-regular fa-user"></i> Ваше имя
+            </label>
+            <input type="text" id="username-input" placeholder="Как вас зовут?" autocomplete="off" maxlength="32">
+          </div>
+          <button type="button" id="btn-wizard-next-1" class="btn-primary wizard-btn-spaced">
+            Продолжить <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
+
+        
+        <div class="wizard-stage" id="stage-avatar">
+          <label class="wizard-label">Фото профиля</label>
+          <p class="wizard-hint">Загрузите фото или пропустите — мы создадим аватар автоматически</p>
+          <div class="avatar-upload-area">
+            <div class="avatar-upload-circle" id="avatar-upload-circle">
+              <i class="fa-solid fa-plus avatar-upload-icon" id="avatar-upload-icon"></i>
+              <img id="avatar-preview-img" class="avatar-preview-img" alt="" style="display:none;">
+              <canvas id="avatar-letter-canvas" class="avatar-letter-canvas" width="120" height="120" style="display:none;"></canvas>
+              <input type="file" id="avatar-file-input" accept="image/*" class="avatar-file-input-overlay">
+            </div>
+            <button type="button" id="btn-remove-avatar" class="btn-remove-avatar" style="display:none;">
+              <i class="fa-solid fa-trash"></i> Убрать фото
+            </button>
+          </div>
+          <div class="wizard-buttons">
+            <button type="button" id="btn-wizard-back-2" class="btn-secondary">
+              <i class="fa-solid fa-arrow-left"></i> Назад
+            </button>
+            <button type="button" id="btn-wizard-next-2" class="btn-primary">
+              Готово <i class="fa-solid fa-check"></i>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    
+    <div id="lobby-grid-hub" class="lobby-grid-hub" style="display:none;">
+
+      <header class="lobby-topbar">
+        <div class="topbar-left">
+          <div class="logo">
+            <img src="logo.png?v=3" alt="Wave" class="logo-img">
+          </div>
+          <button type="button" id="btn-quick-create" class="btn-topbar-action primary">
+            <i class="fa-solid fa-plus"></i><span>Создать комнату</span>
+          </button>
+          <button type="button" id="btn-open-join-modal" class="btn-topbar-action secondary">
+            <i class="fa-solid fa-door-open"></i><span>Войти по коду</span>
+          </button>
+        </div>
+        <div class="topbar-right">
+          <div class="saved-profile-group">
+            <div class="saved-profile-btn" id="saved-profile-bar" title="Редактировать профиль">
+              <div class="saved-profile-avatar" id="saved-profile-avatar-thumb"></div>
+              <span class="saved-profile-name" id="saved-profile-name-label"></span>
+            </div>
+            <button type="button" id="btn-logout" class="btn-logout" title="Сменить профиль">
+              <i class="fa-solid fa-right-from-bracket"></i>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div class="grid-content-area">
+        <div class="grid-header-title">
+          <h2><i class="fa-solid fa-fire text-gradient"></i> Рекомендуемые видео</h2>
+          <p>Нажмите на любое видео, чтобы мгновенно создать комнату и смотреть вместе</p>
+        </div>
+        <div id="video-grid" class="video-grid">
+          
+          <div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-1"></div><div class="skeleton skeleton-line-2"></div></div></div></div>
+          <div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-1"></div><div class="skeleton skeleton-line-2"></div></div></div></div>
+          <div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-1"></div><div class="skeleton skeleton-line-2"></div></div></div></div>
+          <div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-1"></div><div class="skeleton skeleton-line-2"></div></div></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  
+
+  
+  <div id="create-room-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-plus"></i> Создать комнату</h3>
+        <button type="button" id="btn-close-create-room-modal" class="btn-modal-close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label for="create-room-code-input">Код комнаты</label>
+          <div class="room-input-container">
+            <input type="text" id="create-room-code-input" placeholder="Например: wave-777" autocomplete="off">
+            <button type="button" id="btn-random-create-room" title="Случайный код">
+              <i class="fa-solid fa-dice"></i>
+            </button>
+          </div>
+        </div>
+        <button type="button" id="btn-submit-create-room" class="btn-primary btn-full">
+          Создать комнату <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="join-room-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-door-open"></i> Войти в комнату</h3>
+        <button type="button" id="btn-close-join-modal" class="btn-modal-close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label for="room-input">Код комнаты</label>
+          <div class="room-input-container">
+            <input type="text" id="room-input" placeholder="Введите код комнаты" autocomplete="off">
+            <button type="button" id="btn-random-room" title="Случайный код">
+              <i class="fa-solid fa-dice"></i>
+            </button>
+          </div>
+        </div>
+        <button type="button" id="btn-wizard-submit" class="btn-primary btn-full">
+          Войти <i class="fa-solid fa-arrow-right-to-bracket"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="create-with-video-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-play"></i> Создание комнаты</h3>
+        <button type="button" id="btn-close-create-video-modal" class="btn-modal-close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="selected-video-preview-box">
+          <img id="modal-video-thumb" src="" alt="" class="modal-video-thumb" referrerpolicy="no-referrer">
+          <div class="modal-video-info">
+            <span id="modal-video-badge" class="platform-badge youtube"></span>
+            <div id="modal-video-title" class="modal-video-title"></div>
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="create-video-room-input">Код комнаты</label>
+          <div class="room-input-container">
+            <input type="text" id="create-video-room-input" placeholder="Например: room-777" autocomplete="off">
+            <button type="button" id="btn-random-create-video-room" title="Случайный код">
+              <i class="fa-solid fa-dice"></i>
+            </button>
+          </div>
+        </div>
+        <button type="button" id="btn-submit-create-video-room" class="btn-primary btn-full">
+          Смотреть вместе <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="avatar-crop-modal" class="avatar-crop-modal" style="display:none;">
+    <div class="avatar-crop-container">
+      <div class="avatar-crop-header">
+        <i class="fa-solid fa-crop-simple"></i> Редактировать фото
+      </div>
+      <div class="avatar-crop-canvas-wrap">
+        <canvas id="avatar-crop-canvas" width="320" height="320"></canvas>
+      </div>
+      <div class="avatar-crop-zoom">
+        <button id="btn-crop-zoom-out" class="crop-zoom-btn" type="button"><i class="fa-solid fa-minus"></i></button>
+        <input type="range" id="crop-zoom-slider" min="0.5" max="5" step="0.05" value="1">
+        <button id="btn-crop-zoom-in"  class="crop-zoom-btn" type="button"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <div class="avatar-crop-actions">
+        <button id="btn-crop-cancel" class="btn-secondary" type="button">Отмена</button>
+        <button id="btn-crop-save"   class="btn-primary"   type="button">
+          <i class="fa-solid fa-check"></i> Сохранить
+        </button>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="room-screen" class="room-layout">
+
+    <header class="room-navbar">
+      <div class="logo" id="btn-room-logo-home" style="cursor: pointer;" title="Вернуться в лобби">
+        <img src="logo.png?v=3" alt="Wave" class="logo-img">
+      </div>
+      <div class="room-info">
+        <div class="room-badge">
+          <i class="fa-solid fa-hashtag"></i>
+          <span id="room-name-display">...</span>
+        </div>
+        <button id="btn-copy-link" class="btn-secondary btn-sm">
+          <i class="fa-solid fa-share-nodes"></i> Поделиться
+        </button>
+      </div>
+      <div class="room-navbar-right">
+        <div class="users-list-wrapper">
+          <div class="users-count" id="users-count">
+            <i class="fa-solid fa-circle" style="color:var(--success);font-size:7px;margin-right:2px;"></i>
+            <span id="users-count-val">0</span>
+          </div>
+          <div id="users-list-dropdown" class="users-list-dropdown"></div>
+        </div>
+        <button id="btn-toggle-sidebar" class="btn-toggle-sidebar" title="Свернуть/развернуть боковую панель">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+    </header>
+
+    <main class="room-main">
+      <section class="player-section">
+        <div class="player-container">
+          <div id="player-title-bar" class="player-title-bar">
+            <span id="player-video-title">Видео не выбрано</span>
+          </div>
+          <div id="player-placeholder" class="player-placeholder active">
+            <div class="placeholder-content">
+              <i class="fa-solid fa-clapperboard placeholder-icon"></i>
+              <h2>Видео не выбрано</h2>
+              <p>Откройте вкладку «Видео» справа и добавьте YouTube, Rutube, ВК или прямую ссылку.</p>
+              <button id="btn-trigger-add-video" class="btn-secondary">
+                <i class="fa-solid fa-plus"></i> Добавить видео
+              </button>
+            </div>
+          </div>
+          <div id="yt-player-container" class="player-wrapper"><div id="yt-player"></div></div>
+          <div id="rutube-player-container" class="player-wrapper"></div>
+          <div id="vk-player-container" class="player-wrapper"></div>
+          <div id="html5-player-container" class="player-wrapper">
+            <video id="html5-player" playsinline controls></video>
+          </div>
+          <div id="player-click-shield" class="player-click-shield"></div>
+          <div id="player-controls-overlay" class="player-controls-overlay">
+            <div class="progress-bar-container">
+              <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1" class="timeline-slider">
+              <div class="progress-bar-fill" id="timeline-fill">
+                <div class="timeline-handle"></div>
+              </div>
+            </div>
+            <div class="controls-row">
+              <div class="controls-left">
+                <button id="btn-custom-play" class="control-btn" title="Воспроизведение/Пауза">
+                  <i class="fa-solid fa-play"></i>
+                </button>
+                <span id="time-display" class="time-display">0:00 / 0:00</span>
+              </div>
+              <div class="controls-right">
+                <button id="btn-custom-fullscreen" class="control-btn" title="На весь экран">
+                  <i class="fa-solid fa-expand"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="autoplay-overlay" class="autoplay-overlay">
+          <div class="overlay-content">
+            <i class="fa-solid fa-volume-high overlay-icon"></i>
+            <h3>Включить синхронизацию звука</h3>
+            <p>Браузер заблокировал автовоспроизведение. Нажмите для подключения.</p>
+            <button id="btn-autoplay-sync" class="btn-primary">
+              <i class="fa-solid fa-play"></i> Подключиться
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar-section">
+        <div class="sidebar-tabs">
+          <button class="tab-btn active" data-tab="chat-tab">
+            <i class="fa-regular fa-comments"></i> Чат
+          </button>
+          <button class="tab-btn" data-tab="video-tab" id="tab-add-video-btn">
+            <i class="fa-solid fa-film"></i> Видео
+          </button>
+        </div>
+        <div class="tab-container">
+          <div id="chat-tab" class="tab-content active">
+            <div class="chat-messages" id="chat-messages"></div>
+            <div id="typing-indicator" style="display: none;"></div>
+            <form id="chat-form" class="chat-form">
+              <div id="chat-reply-preview" class="chat-reply-preview">
+                <div class="reply-line"></div>
+                <div class="reply-content">
+                  <div class="reply-user" id="reply-user-name"></div>
+                  <div class="reply-text"  id="reply-text-content"></div>
+                </div>
+                <button type="button" id="btn-close-reply" class="btn-close-reply">&times;</button>
+              </div>
+              <div class="chat-input-row">
+                <input type="text" id="chat-input" placeholder="Напишите сообщение..." autocomplete="off" required>
+                <button type="submit" class="btn-send"><i class="fa-solid fa-paper-plane"></i></button>
+              </div>
+            </form>
+          </div>
+          <div id="video-tab" class="tab-content">
+            <div class="video-panel">
+              <h3><i class="fa-solid fa-link"></i> Вставить ссылку</h3>
+              <form id="video-link-form" class="video-link-form">
+                <div class="input-container">
+                  <input type="text" id="video-url-input" placeholder="YouTube, Rutube, ВК iframe, .mp4/.m3u8" required autocomplete="off">
+                  <button type="submit" class="btn-add"><i class="fa-solid fa-play"></i></button>
+                </div>
+                <p class="help-text">YouTube, Rutube, iframe ВК («Поделиться» → «Код вставки») и прямые ссылки на видео.</p>
+              </form>
+              <div class="divider"><span>или</span></div>
+              <h3><i class="fa-solid fa-magnifying-glass"></i> Поиск в ВК Видео</h3>
+              <div class="vk-search-form">
+                <div class="input-container">
+                  <input type="text" id="vk-search-input" placeholder="Поиск фильмов, шоу, роликов..." autocomplete="off">
+                  <button type="button" id="btn-vk-search" class="btn-add">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                  </button>
+                </div>
+                <div class="vk-token-status" id="vk-token-status">
+                  <span class="status-warning">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    Поиск ВК требует токена. <a href="#" id="link-setup-token">Настроить</a>
+                  </span>
+                </div>
+              </div>
+              <div class="search-results-container" id="search-results-container">
+                <div class="search-placeholder">
+                  <i class="fa-solid fa-video"></i>
+                  <p>Введите запрос для поиска видео в ВК</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  
+  <div id="token-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-key"></i> Настройка VK API</h2>
+        <button id="btn-close-modal" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Для поиска ВК нужен <strong>Сервисный ключ доступа</strong> (Service Token).</p>
+        <div class="instructions">
+          <h4>Как получить ключ:</h4>
+          <ol>
+            <li>Перейдите на <a href="https://vk.com/apps?act=manage" target="_blank">VK Developers</a></li>
+            <li>Создайте приложение типа «Standalone»</li>
+            <li>Скопируйте <strong>«Сервисный ключ доступа»</strong></li>
+            <li>Вставьте в <code>config.json</code> → поле <code>VK_SERVICE_TOKEN</code> и перезапустите сервер</li>
+          </ol>
+        </div>
+        <p class="modal-note">
+          <i class="fa-solid fa-info-circle"></i>
+          Если сервер на чужом хостинге — обратитесь к его владельцу.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  
+  <div id="chat-context-menu" class="chat-context-menu">
+    <button class="context-item btn-reply" id="btn-context-reply">
+      <i class="fa-solid fa-reply"></i> Ответить
+    </button>
+  </div>
+
+  
+  <div id="profile-backdrop" class="profile-backdrop"></div>
+  <aside id="profile-panel" class="profile-panel" aria-label="Мой профиль">
+
+    <div class="profile-panel-header">
+      <h2>Мой профиль</h2>
+      <button id="btn-close-profile" class="btn-modal-close" aria-label="Закрыть профиль">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div class="profile-hero">
+      <div class="profile-avatar-ring" id="profile-avatar-large"></div>
+      <div class="profile-username" id="profile-display-name">—</div>
+      <div class="profile-tagline">Wave — вместе интереснее</div>
+    </div>
+
+    <div class="profile-stats-row">
+      <div class="stat-pill">
+        <span class="stat-value" id="stat-hours">0</span>
+        <span class="stat-label">Часов</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-value" id="stat-videos">0</span>
+        <span class="stat-label">Видео</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-value" id="stat-sessions">0</span>
+        <span class="stat-label">Сессий</span>
+      </div>
+    </div>
+
+    <div class="profile-history">
+      <h3>История просмотров</h3>
+      <div id="watch-history-list" class="history-empty">
+        <i class="fa-solid fa-film"></i>
+        <p>Ни одного видео пока нет.<br>Запустите что-нибудь — и оно появится здесь.</p>
+      </div>
+    </div>
+
+  </aside>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://vk.com/js/api/videoplayer.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
+  <script src="client.js?v=111"></script>
+  <script src="profile.js?v=111"></script>
+</body>
+</html>
