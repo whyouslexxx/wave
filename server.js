@@ -6,9 +6,10 @@ const { Server } = require('socket.io');
 const path    = require('path');
 const fs      = require('fs');
 const auth    = require('./auth');
+const { createRecommender } = require('./youtube');
 
 
-let config = { PORT: 3000, VK_SERVICE_TOKEN: '' };
+let config = { PORT: 3000, VK_SERVICE_TOKEN: '', YOUTUBE_API_KEY: '', YOUTUBE_REGION: 'RU' };
 const configPath = path.join(__dirname, 'config.json');
 if (fs.existsSync(configPath)) {
   try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); }
@@ -16,6 +17,8 @@ if (fs.existsSync(configPath)) {
 }
 const PORT             = process.env.PORT             || config.PORT            || 3000;
 const VK_SERVICE_TOKEN = process.env.VK_SERVICE_TOKEN || config.VK_SERVICE_TOKEN || '';
+const YOUTUBE_API_KEY  = process.env.YOUTUBE_API_KEY  || config.YOUTUBE_API_KEY  || '';
+const YOUTUBE_REGION   = process.env.YOUTUBE_REGION   || config.YOUTUBE_REGION   || 'RU';
 
 
 const app    = express();
@@ -448,6 +451,30 @@ app.get('/api/hls-proxy', async (req, res) => {
   }
 });
 
+// ── Рекомендации для главной ────────────────────────────────────────────────
+const recommender = createRecommender({
+  apiKey: YOUTUBE_API_KEY,
+  region: YOUTUBE_REGION,
+  getJson: async (url) => {
+    const r = await httpGet(url, { headers: { Referer: '' } });
+    return JSON.parse(r.body.toString('utf8'));
+  }
+});
+
+app.get('/api/recommendations', async (req, res) => {
+  const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+  const count    = Math.min(24, Math.max(1, parseInt(req.query.count, 10) || 8));
+  const exclude  = typeof req.query.exclude === 'string'
+    ? req.query.exclude.split(',').filter(id => /^[\w-]{11}$/.test(id)).slice(0, 100) : [];
+  try {
+    const items = await recommender.pick(category, count, exclude);
+    res.json({ source: items.length ? 'youtube' : 'none', categories: recommender.categories, items });
+  } catch (err) {
+    console.warn('[recommendations] error:', err.message);
+    res.json({ source: 'none', categories: recommender.categories, items: [] });
+  }
+});
+
 app.get('/api/vk-status', rateLimiter, (req, res) => {
   res.json({ configured: !!VK_SERVICE_TOKEN });
 });
@@ -591,7 +618,93 @@ setInterval(() => {
   }
 }, WATCH_TICK_S * 1000).unref();
 
+// ── Присутствие, доступ к комнатам, хозяин ──────────────────────────────────
+const userSockets = new Map();               // userId → Set<socket>
+const grants      = new Map();               // `${userId}|${roomId}` → expiresAt (пароль введён / есть приглашение)
+const GRANT_TTL_MS = 12 * 3600 * 1000;
+
+function grantAccess(userId, roomId, ttl = GRANT_TTL_MS) { grants.set(`${userId}|${roomId}`, Date.now() + ttl); }
+function hasGrant(userId, roomId) {
+  const exp = grants.get(`${userId}|${roomId}`);
+  if (!exp) return false;
+  if (exp < Date.now()) { grants.delete(`${userId}|${roomId}`); return false; }
+  return true;
+}
+setInterval(() => { const now = Date.now(); for (const [k, e] of grants) if (e < now) grants.delete(k); }, 600_000).unref();
+
+function presenceOf(userId) {
+  const set = userSockets.get(userId);
+  if (!set || !set.size) return { online: false, roomId: null };
+  let roomId = null;
+  for (const sk of set) if (sk.data.roomId) roomId = sk.data.roomId;
+  return { online: true, roomId };
+}
+
+function broadcastPresence(userId) {
+  const me = auth.getUser(userId);
+  if (!me) return;
+  const card = auth.userCard(me);
+  for (const fid of auth.friendIds(userId)) io.to('user:' + fid).emit('friend-presence', card);
+}
+
+const uidOfSocket = (socketId) => io.sockets.sockets.get(socketId)?.data.userId;
+
+// Хозяин — владелец, если он в комнате, иначе самый старый участник (чтобы комната не «зависала»).
+function hostSocketId(room, meta) {
+  const owner = room.users.find(u => uidOfSocket(u.id) === meta.ownerId);
+  return (owner || room.users[0] || {}).id || null;
+}
+
+function settingsOf(roomId) {
+  const meta = auth.getRoom(roomId), room = rooms[roomId];
+  if (!meta) return null;
+  const hostId = room ? hostSocketId(room, meta) : null;
+  const hostUser = hostId ? auth.getUser(uidOfSocket(hostId)) : null;
+  return { ...auth.roomView(meta), hostId, hostName: hostUser ? hostUser.username : '' };
+}
+
+function canControl(socketId, roomId) {
+  const meta = auth.getRoom(roomId), room = rooms[roomId];
+  if (!meta || !room || meta.controlMode !== 'host') return true;
+  return hostSocketId(room, meta) === socketId;
+}
+
+function liveRoomInfo(roomId) {
+  const room = rooms[roomId];
+  if (!room || !room.users.length) return null;
+  const users = room.users.slice(0, 5).map(u => {
+    const acc = auth.getUser(uidOfSocket(u.id));
+    return { username: u.username, avatar: acc ? `/api/users/${acc.id}/avatar?v=${acc.avatarVer || 0}` : '' };
+  });
+  const v = room.video;
+  return {
+    count: room.users.length, users,
+    video: v ? { title: v.title || '', type: v.type, thumb: v.type === 'youtube' && /^[\w-]{11}$/.test(v.id) ? `/api/thumbnail/${v.id}` : '' } : null
+  };
+}
+
+auth.setHooks({
+  notify:   (userId, event, payload) => io.to('user:' + userId).emit(event, payload),
+  presence: presenceOf,
+  liveRoom: liveRoomInfo,
+  listLive: () => Object.keys(rooms).filter(id => rooms[id].users.length)
+});
+
+function leaveCurrentRoom(socket, roomId) {
+  socket.leave(roomId);
+  removeUserFromRoom(roomId, socket.id);
+  socket.data.roomId = null;
+  const settings = settingsOf(roomId);
+  if (settings) io.to(roomId).emit('room-settings', settings);
+}
+
 io.on('connection', (socket) => {
+  const userId = socket.data.userId;
+  socket.join('user:' + userId);
+  if (!userSockets.has(userId)) userSockets.set(userId, new Set());
+  userSockets.get(userId).add(socket);
+  broadcastPresence(userId);
+
   let currentRoomId = null;
   let username      = 'Аноним';
   let userAvatar    = 'avatar-1';
@@ -608,22 +721,45 @@ io.on('connection', (socket) => {
   }
 
   
-  socket.on('join-room', ({ roomId }) => {
+  let pwAttempts = 0, pwWindowEnd = 0;
+
+  socket.on('join-room', async ({ roomId, password } = {}) => {
     if (!roomId || typeof roomId !== 'string') return;
     const identity = auth.roomIdentity(socket.data.userId);
     if (!identity) return socket.disconnect(true);
     const safeRoomId = roomId.slice(0, 80).toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (!safeRoomId) return;
-
-    if (currentRoomId) {
-      socket.leave(currentRoomId);
-      removeUserFromRoom(currentRoomId, socket.id);
+    if (!auth.ROOM_ID_RE.test(safeRoomId)) {
+      return socket.emit('room-error', { code: 'BAD_CODE', roomId: safeRoomId, message: 'Код комнаты: 3–40 символов, латиница, цифры, «-» и «_»' });
     }
 
+    let meta = auth.getRoom(safeRoomId);
+    if (!meta) meta = await auth.createRoom(safeRoomId, identity.id);   // новая комната: создатель — владелец
+
+    // Доступ к комнате с паролем: владелец, приглашённый или знающий пароль
+    if (meta.passHash && meta.ownerId !== identity.id && !hasGrant(identity.id, safeRoomId)) {
+      if (typeof password !== 'string' || !password) {
+        return socket.emit('room-error', { code: 'PASSWORD_REQUIRED', roomId: safeRoomId, message: 'Комната защищена паролем' });
+      }
+      const now = Date.now();
+      if (now > pwWindowEnd) { pwAttempts = 0; pwWindowEnd = now + 60_000; }
+      if (++pwAttempts > 6) {
+        return socket.emit('room-error', { code: 'TOO_MANY', roomId: safeRoomId, message: 'Слишком много попыток. Подождите минуту' });
+      }
+      if (!(await auth.checkRoomPassword(safeRoomId, password))) {
+        return socket.emit('room-error', { code: 'BAD_PASSWORD', roomId: safeRoomId, message: 'Неверный пароль' });
+      }
+      grantAccess(identity.id, safeRoomId);
+    }
+
+    if (currentRoomId) leaveCurrentRoom(socket, currentRoomId);
+
     currentRoomId = safeRoomId;
+    socket.data.roomId = safeRoomId;
     username      = identity.username;
     userAvatar    = identity.avatar;
     auth.bumpSessions(identity.id);
+    auth.addRecentRoom(identity.id, safeRoomId);
+    auth.touchRoom(safeRoomId);
 
     socket.join(currentRoomId);
 
@@ -641,20 +777,68 @@ io.on('connection', (socket) => {
     socket.emit('room-status', {
       video: room.video, isPlaying: room.isPlaying,
       time: getEstimatedTime(room), version: room.version,
-      users: room.users, messages: room.messages
+      users: room.users, messages: room.messages,
+      settings: settingsOf(currentRoomId)
     });
+    socket.to(currentRoomId).emit('room-settings', settingsOf(currentRoomId));
 
     socket.to(currentRoomId).emit('user-joined', { id: socket.id, username, avatar: userAvatar, users: room.users });
 
     const msg = pushSystemMsg(room, `${username} присоединился к просмотру.`);
     io.to(currentRoomId).emit('chat-message', msg);
+    broadcastPresence(identity.id);
     console.log(`[join] ${username} (${socket.id}) → ${currentRoomId}`);
   });
 
-  
+  // Настройки комнаты — только владелец
+  socket.on('room-settings', async (patch) => {
+    if (!currentRoomId || !patch || typeof patch !== 'object') return;
+    const meta = auth.getRoom(currentRoomId);
+    if (!meta || meta.ownerId !== socket.data.userId) {
+      return socket.emit('room-error', { code: 'FORBIDDEN', roomId: currentRoomId, message: 'Настройки может менять только владелец комнаты' });
+    }
+    const next = {};
+    if (typeof patch.title === 'string') next.title = patch.title;
+    if (patch.visibility === 'public' || patch.visibility === 'unlisted') next.visibility = patch.visibility;
+    if (patch.controlMode === 'host' || patch.controlMode === 'all') next.controlMode = patch.controlMode;
+    if (patch.password === null || patch.password === '') next.password = '';
+    else if (typeof patch.password === 'string') {
+      if (patch.password.length < auth.MIN_ROOM_PASSWORD || patch.password.length > 128) {
+        return socket.emit('room-error', { code: 'BAD_PASSWORD', roomId: currentRoomId, message: `Пароль комнаты: от ${auth.MIN_ROOM_PASSWORD} символов` });
+      }
+      next.password = patch.password;
+    }
+    await auth.updateRoom(currentRoomId, next);
+    io.to(currentRoomId).emit('room-settings', settingsOf(currentRoomId));
+    const room = rooms[currentRoomId];
+    if (room) io.to(currentRoomId).emit('chat-message', pushSystemMsg(room, `${username} изменил настройки комнаты.`));
+  });
+
+  // Приглашение друга в текущую комнату
+  let lastInvites = new Map();
+  socket.on('invite-friend', ({ userId: targetId } = {}, ack) => {
+    const reply = (r) => { if (typeof ack === 'function') ack(r); };
+    if (!currentRoomId || typeof targetId !== 'string') return reply({ ok: false, message: 'Сначала зайдите в комнату' });
+    if (!auth.areFriends(socket.data.userId, targetId)) return reply({ ok: false, message: 'Приглашать можно только друзей' });
+    if (!presenceOf(targetId).online) return reply({ ok: false, message: 'Друг сейчас не в сети' });
+    const key = targetId + '|' + currentRoomId;
+    if (Date.now() - (lastInvites.get(key) || 0) < 15_000) return reply({ ok: false, message: 'Приглашение уже отправлено' });
+    lastInvites.set(key, Date.now());
+    const meta = auth.getRoom(currentRoomId);
+    grantAccess(targetId, currentRoomId, 2 * 3600 * 1000);
+    const me = auth.getUser(socket.data.userId);
+    io.to('user:' + targetId).emit('room-invite', {
+      from: { id: me.id, username: me.username, avatar: `/api/users/${me.id}/avatar?v=${me.avatarVer || 0}` },
+      roomId: currentRoomId, title: meta ? meta.title : '', locked: !!(meta && meta.passHash)
+    });
+    reply({ ok: true });
+  });
+
+
   socket.on('video-change', async (videoData) => {
     if (!currentRoomId || !rooms[currentRoomId]) return;
     if (!videoData || typeof videoData !== 'object') return;
+    if (!canControl(socket.id, currentRoomId)) return socket.emit('control-denied', { hostName: (settingsOf(currentRoomId) || {}).hostName || '' });
     const { type, url, id, playerUrl, title, referer } = videoData;
     if (!type || !['youtube', 'vk', 'rutube', 'direct'].includes(type)) return;
 
@@ -698,6 +882,10 @@ io.on('connection', (socket) => {
     if (!isFinite(t) || t < 0) return;
 
     const room = rooms[currentRoomId];
+    if (!canControl(socket.id, currentRoomId)) {
+      socket.emit('control-denied', { hostName: (settingsOf(currentRoomId) || {}).hostName || '' });
+      return socket.emit('server-action', { action: room.isPlaying ? 'play' : 'pause', time: getEstimatedTime(room), version: room.version, force: true });
+    }
     room.version++;
     const version = room.version;
 
@@ -809,8 +997,7 @@ io.on('connection', (socket) => {
 
   socket.on('leave-room', () => {
     if (!currentRoomId) return;
-    socket.leave(currentRoomId);
-    removeUserFromRoom(currentRoomId, socket.id);
+    leaveCurrentRoom(socket, currentRoomId);
     const room = rooms[currentRoomId];
     const users = room ? room.users : [];
     socket.to(currentRoomId).emit('user-left', { id: socket.id, username, users });
@@ -820,11 +1007,15 @@ io.on('connection', (socket) => {
     }
     console.log(`[leave] ${username} (${socket.id}) ← ${currentRoomId}`);
     currentRoomId = null;
+    broadcastPresence(userId);
   });
 
   socket.on('disconnect', () => {
+    const set = userSockets.get(userId);
+    if (set) { set.delete(socket); if (!set.size) userSockets.delete(userId); }
+    broadcastPresence(userId);
     if (!currentRoomId) return;
-    removeUserFromRoom(currentRoomId, socket.id);
+    leaveCurrentRoom(socket, currentRoomId);
     const room = rooms[currentRoomId];
     const users = room ? room.users : [];
     socket.to(currentRoomId).emit('user-left', { id: socket.id, username, users });

@@ -19,20 +19,21 @@ const MAX_AVATAR_LEN  = 250_000;
 const HISTORY_MAX     = 100;
 
 // ── Хранилище ───────────────────────────────────────────────────────────────
-let db = { users: {}, sessions: {} };
+let db = { users: {}, sessions: {}, rooms: {} };
 const idByName = new Map();
 
 function load() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      db = { users: parsed.users || {}, sessions: parsed.sessions || {} };
+      db = { users: parsed.users || {}, sessions: parsed.sessions || {}, rooms: parsed.rooms || {} };
     }
   } catch (e) {
     console.error('[auth] db load error:', e.message);
   }
-  for (const u of Object.values(db.users)) idByName.set(u.username.toLowerCase(), u.id);
+  for (const u of Object.values(db.users)) { idByName.set(u.username.toLowerCase(), u.id); ensureSocial(u); }
   pruneSessions();
+  pruneRooms();
 }
 
 let saveTimer = null;
@@ -51,6 +52,19 @@ function flush() {
   } catch (e) {
     console.error('[auth] db save error:', e.message);
   }
+}
+
+function ensureSocial(u) {
+  u.friends     = u.friends     || [];
+  u.requestsIn  = u.requestsIn  || [];
+  u.requestsOut = u.requestsOut || [];
+  u.recentRooms = u.recentRooms || [];
+  u.avatarVer   = u.avatarVer   || 0;
+}
+
+function pruneRooms() {
+  const limit = Date.now() - 60 * 24 * 3600 * 1000;
+  for (const [id, r] of Object.entries(db.rooms)) if (r.lastUsed < limit) delete db.rooms[id];
 }
 
 function pruneSessions() {
@@ -205,6 +219,109 @@ function bumpSessions(userId) {
   save();
 }
 
+// ── Хуки сервера (присутствие, живые комнаты, уведомления) ──────────────────
+let hooks = {
+  notify:   () => {},
+  presence: () => ({ online: false, roomId: null }),
+  liveRoom: () => null,
+  listLive: () => []
+};
+function setHooks(h) { hooks = { ...hooks, ...h }; }
+
+function avatarUrl(u) { return `/api/users/${u.id}/avatar?v=${u.avatarVer || 0}`; }
+
+function userCard(u) {
+  const p = hooks.presence(u.id);
+  const meta = p.roomId ? db.rooms[p.roomId] : null;
+  return {
+    id: u.id, username: u.username, avatar: avatarUrl(u),
+    online: !!p.online, roomId: meta ? p.roomId : null, roomLocked: !!(meta && meta.passHash)
+  };
+}
+
+// ── Реестр комнат ───────────────────────────────────────────────────────────
+const ROOM_ID_RE = /^[a-z0-9_-]{3,40}$/;
+const ROOM_CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const MIN_ROOM_PASSWORD = 4;
+
+function getRoom(id) { return db.rooms[id] || null; }
+
+function generateRoomCode() {
+  for (let i = 0; i < 20; i++) {
+    let code = '';
+    for (let j = 0; j < 6; j++) code += ROOM_CODE_ALPHABET[crypto.randomInt(ROOM_CODE_ALPHABET.length)];
+    if (!db.rooms[code]) return code;
+  }
+  return 'room-' + crypto.randomBytes(4).toString('hex');
+}
+
+async function createRoom(id, ownerId, opts = {}) {
+  const now = Date.now();
+  const room = {
+    id, ownerId, title: String(opts.title || '').slice(0, 60),
+    visibility: opts.visibility === 'public' ? 'public' : 'unlisted',
+    controlMode: opts.controlMode === 'host' ? 'host' : 'all',
+    passHash: opts.password ? await hashPassword(opts.password) : '',
+    createdAt: now, lastUsed: now
+  };
+  db.rooms[id] = room;
+  save();
+  return room;
+}
+
+// patch: { title?, visibility?, controlMode?, password? (строка — задать, null/'' — снять) }
+async function updateRoom(id, patch) {
+  const r = db.rooms[id];
+  if (!r) return null;
+  if (typeof patch.title === 'string') r.title = patch.title.trim().slice(0, 60);
+  if (patch.visibility === 'public' || patch.visibility === 'unlisted') r.visibility = patch.visibility;
+  if (patch.controlMode === 'host' || patch.controlMode === 'all') r.controlMode = patch.controlMode;
+  if (patch.password !== undefined) r.passHash = patch.password ? await hashPassword(patch.password) : '';
+  save();
+  return r;
+}
+
+function touchRoom(id) { const r = db.rooms[id]; if (r) { r.lastUsed = Date.now(); save(); } }
+
+async function checkRoomPassword(id, password) {
+  const r = db.rooms[id];
+  if (!r || !r.passHash) return true;
+  if (typeof password !== 'string' || password.length > MAX_PASSWORD) return false;
+  return verifyPassword(password, r.passHash);
+}
+
+function addRecentRoom(userId, roomId) {
+  const u = db.users[userId];
+  if (!u) return;
+  u.recentRooms = [{ id: roomId, at: Date.now() }, ...u.recentRooms.filter(r => r.id !== roomId)].slice(0, 20);
+  save();
+}
+
+function roomView(r) {
+  const owner = db.users[r.ownerId];
+  return {
+    id: r.id, ownerId: r.ownerId, ownerName: owner ? owner.username : '',
+    title: r.title, visibility: r.visibility, locked: !!r.passHash, controlMode: r.controlMode
+  };
+}
+
+// ── Друзья ──────────────────────────────────────────────────────────────────
+function areFriends(a, b) { const u = db.users[a]; return !!u && u.friends.includes(b); }
+function friendIds(userId) { const u = db.users[userId]; return u ? [...u.friends] : []; }
+const without = (arr, id) => arr.filter(x => x !== id);
+
+function makeFriends(a, b) {
+  const ua = db.users[a], ub = db.users[b];
+  ua.friends = [...new Set([...ua.friends, b])]; ub.friends = [...new Set([...ub.friends, a])];
+  ua.requestsIn = without(ua.requestsIn, b); ua.requestsOut = without(ua.requestsOut, b);
+  ub.requestsIn = without(ub.requestsIn, a); ub.requestsOut = without(ub.requestsOut, a);
+}
+
+function friendsPayload(u) {
+  const list = (ids) => ids.map(id => db.users[id]).filter(Boolean).map(userCard);
+  return { friends: list(u.friends), incoming: list(u.requestsIn), outgoing: list(u.requestsOut) };
+}
+
 // ── HTTP-маршруты ───────────────────────────────────────────────────────────
 function mount(app) {
   const requireJson = (req, res, next) =>
@@ -247,6 +364,7 @@ function mount(app) {
         id: crypto.randomUUID(), username, passHash, avatar: '', createdAt: Date.now(),
         stats: { totalSeconds: 0, sessions: 0 }, history: []
       };
+      ensureSocial(user);
       db.users[user.id] = user;
       idByName.set(username.toLowerCase(), user.id);
       setSessionCookie(req, res, createSession(user.id));
@@ -299,6 +417,7 @@ function mount(app) {
       return res.status(400).json({ error: 'BAD_AVATAR', message: 'Фото должно быть PNG/JPEG/WebP до ~180 КБ' });
     }
     req.user.avatar = avatar;
+    req.user.avatarVer = Date.now();
     save();
     res.json({ user: publicUser(req.user) });
   });
@@ -347,6 +466,134 @@ function mount(app) {
     save();
     res.json({ ok: true });
   });
+
+  // ── Аватары по URL (чтобы не гонять base64 в каждом списке) ──
+  app.get('/api/users/:id/avatar', authed, (req, res) => {
+    const u = db.users[req.params.id];
+    if (!u) return res.status(404).end();
+    res.set('Cache-Control', 'private, max-age=86400');
+    const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(u.avatar || '');
+    if (m) { res.type(m[1]); return res.send(Buffer.from(m[2], 'base64')); }
+    const svg = decodeURIComponent(letterAvatarDataUri(u.username).replace('data:image/svg+xml;utf8,', ''));
+    res.type('image/svg+xml').send(svg);
+  });
+
+  // ── Комнаты ──
+  const liveView = (id) => hooks.liveRoom(id);
+
+  app.post('/api/rooms', requireJson, authed, async (req, res) => {
+    const { code, title, visibility, controlMode, password } = req.body || {};
+    if (hit(`mkroom|${req.user.id}`, 30, 3600_000)) {
+      return res.status(429).json({ error: 'TOO_MANY', message: 'Слишком много новых комнат, попробуйте позже' });
+    }
+    let id = code == null || code === '' ? generateRoomCode() : String(code).trim().toLowerCase();
+    if (!ROOM_ID_RE.test(id)) {
+      return res.status(400).json({ error: 'BAD_CODE', message: 'Код комнаты: 3–40 символов, латиница, цифры, «-» и «_»' });
+    }
+    if (password != null && password !== '' && (typeof password !== 'string' || password.length < MIN_ROOM_PASSWORD || password.length > MAX_PASSWORD)) {
+      return res.status(400).json({ error: 'BAD_PASSWORD', message: `Пароль комнаты: от ${MIN_ROOM_PASSWORD} символов` });
+    }
+    const existing = db.rooms[id];
+    if (existing) {
+      if (existing.ownerId === req.user.id) return res.json({ room: roomView(existing) });
+      return res.status(409).json({ error: 'CODE_TAKEN', message: 'Этот код уже занят — выберите другой' });
+    }
+    try {
+      const room = await createRoom(id, req.user.id, { title, visibility, controlMode, password });
+      res.json({ room: roomView(room) });
+    } catch (e) {
+      console.error('[rooms] create error:', e.message);
+      res.status(500).json({ error: 'SERVER_ERROR', message: 'Ошибка сервера' });
+    }
+  });
+
+  app.get('/api/rooms/mine', authed, (req, res) => {
+    const u = req.user;
+    const seen = new Set();
+    const rows = [];
+    for (const r of u.recentRooms) {
+      const meta = db.rooms[r.id];
+      if (meta && !seen.has(r.id)) { seen.add(r.id); rows.push({ ...roomView(meta), lastVisited: r.at, live: liveView(r.id) }); }
+    }
+    for (const meta of Object.values(db.rooms)) {
+      if (meta.ownerId === u.id && !seen.has(meta.id)) { seen.add(meta.id); rows.push({ ...roomView(meta), lastVisited: meta.lastUsed, live: liveView(meta.id) }); }
+    }
+    rows.sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || b.lastVisited - a.lastVisited);
+    res.json({ rooms: rows.slice(0, 12) });
+  });
+
+  app.get('/api/rooms/public', authed, (req, res) => {
+    const rows = hooks.listLive()
+      .map(id => db.rooms[id]).filter(m => m && m.visibility === 'public')
+      .map(m => ({ ...roomView(m), live: liveView(m.id) }))
+      .filter(r => r.live)
+      .sort((a, b) => b.live.count - a.live.count)
+      .slice(0, 18);
+    res.json({ rooms: rows });
+  });
+
+  app.get('/api/rooms/:id', authed, (req, res) => {
+    const id = String(req.params.id).toLowerCase();
+    const meta = ROOM_ID_RE.test(id) ? db.rooms[id] : null;
+    if (!meta) return res.json({ exists: false, id });
+    res.json({ exists: true, room: roomView(meta), live: liveView(id) });
+  });
+
+  // ── Друзья ──
+  app.get('/api/friends', authed, (req, res) => res.json(friendsPayload(req.user)));
+
+  app.post('/api/friends/request', requireJson, authed, (req, res) => {
+    const name = String((req.body || {}).username || '').trim().toLowerCase();
+    if (hit(`freq|${req.user.id}`, 30, 3600_000)) return res.status(429).json({ error: 'TOO_MANY', message: 'Слишком много заявок, попробуйте позже' });
+    const target = db.users[idByName.get(name)];
+    if (!target) return res.status(404).json({ error: 'NOT_FOUND', message: 'Пользователь с таким именем не найден' });
+    const me = req.user;
+    if (target.id === me.id) return res.status(400).json({ error: 'SELF', message: 'Нельзя добавить самого себя' });
+    if (me.friends.includes(target.id)) return res.status(409).json({ error: 'ALREADY', message: 'Вы уже друзья' });
+    if (me.requestsIn.includes(target.id)) {
+      makeFriends(me.id, target.id);
+      save();
+      hooks.notify(target.id, 'friends-changed', { kind: 'accepted', user: userCard(me) });
+      return res.json({ status: 'friends', ...friendsPayload(me) });
+    }
+    if (!me.requestsOut.includes(target.id)) {
+      me.requestsOut.push(target.id);
+      target.requestsIn.push(me.id);
+      save();
+      hooks.notify(target.id, 'friends-changed', { kind: 'request', user: userCard(me) });
+    }
+    res.json({ status: 'sent', ...friendsPayload(me) });
+  });
+
+  app.post('/api/friends/accept', requireJson, authed, (req, res) => {
+    const id = String((req.body || {}).id || '');
+    const me = req.user;
+    if (!me.requestsIn.includes(id) || !db.users[id]) return res.status(404).json({ error: 'NOT_FOUND', message: 'Заявка не найдена' });
+    makeFriends(me.id, id);
+    save();
+    hooks.notify(id, 'friends-changed', { kind: 'accepted', user: userCard(me) });
+    res.json(friendsPayload(me));
+  });
+
+  // отклонить входящую или отменить исходящую заявку
+  app.post('/api/friends/decline', requireJson, authed, (req, res) => {
+    const id = String((req.body || {}).id || '');
+    const me = req.user, other = db.users[id];
+    me.requestsIn = without(me.requestsIn, id); me.requestsOut = without(me.requestsOut, id);
+    if (other) { other.requestsIn = without(other.requestsIn, me.id); other.requestsOut = without(other.requestsOut, me.id); }
+    save();
+    if (other) hooks.notify(id, 'friends-changed', { kind: 'refresh' });
+    res.json(friendsPayload(me));
+  });
+
+  app.delete('/api/friends/:id', authed, (req, res) => {
+    const id = req.params.id, me = req.user, other = db.users[id];
+    me.friends = without(me.friends, id);
+    if (other) other.friends = without(other.friends, me.id);
+    save();
+    if (other) hooks.notify(id, 'friends-changed', { kind: 'refresh' });
+    res.json(friendsPayload(me));
+  });
 }
 
 function socketMiddleware(socket, next) {
@@ -360,4 +607,8 @@ load();
 process.on('exit', () => { if (saveTimer) flush(); });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { flush(); process.exit(0); });
 
-module.exports = { mount, socketMiddleware, roomIdentity, recordWatch, bumpSessions };
+module.exports = {
+  mount, socketMiddleware, roomIdentity, recordWatch, bumpSessions, setHooks,
+  getUser: (id) => db.users[id] || null, userCard, areFriends, friendIds,
+  getRoom, createRoom, updateRoom, touchRoom, checkRoomPassword, addRecentRoom, roomView, ROOM_ID_RE, MIN_ROOM_PASSWORD
+};

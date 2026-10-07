@@ -1685,3 +1685,16 @@ input[type="password"]::placeholder { color: var(--tx-muted); }
 }
 .history-action:hover { color: var(--primary); border-color: var(--border-bright); background: var(--primary-dim); }
 .history-action.remove:hover { color: var(--error); border-color: rgba(232,122,122,0.4); background: rgba(232,122,122,0.08); }
+
+/* ── Рекомендации: категории и обновление ────────────────────────────────── */
+.grid-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.grid-title-row .profile-link-btn:disabled { opacity: 0.5; cursor: progress; }
+.grid-categories { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
+.grid-categories[hidden] { display: none; }
+.grid-chip {
+  padding: 7px 14px; border-radius: var(--r-full); cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--tx-2);
+  font: 600 13px var(--ff-body); transition: all var(--t) var(--ease);
+}
+.grid-chip:hover { background: rgba(255,255,255,0.1); color: var(--tx); }
+.grid-chip.active { background: var(--primary-dim); color: var(--primary); border-color: var(--border-bright); }

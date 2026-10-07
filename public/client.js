@@ -505,63 +505,119 @@ const ALL_CURATED_VIDEOS = [
   }
 ];
 
-function renderLobbyVideoGrid() {
+function buildVideoCard(item) {
+const card = document.createElement('div');
+card.className = 'video-card';
+  const isYt = item.type === 'youtube';
+  const isRutube = item.type === 'rutube';
+  const pClass = isYt ? 'youtube' : (isRutube ? 'rutube' : 'vk');
+  const pIcon = isYt ? 'fa-brands fa-youtube' : 'fa-solid fa-play';
+  const pLabel = isYt ? 'YouTube' : (isRutube ? 'Rutube' : 'VK Видео');
+
+  const thumbFallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iMzM3IiB2aWV3Qm94PSIwIDAgNjAwIDMzNyI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iIzFlMWIyZSIvPjxjaXJjbGUgY3g9IjMwMCIgY3k9IjE2OCIgcj0iNDAiIGZpbGw9IiM4YjVjZjYiIG9wYWNpdHk9IjAuOCIvPjxwb2x5Z29uIHBvaW50cz0iMjg4LDE0OCAzMjQsMTY4IDI4OCwxODgiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=";
+  const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#06b6d4'];
+  const channelName = item.channelName || '?';
+  const colorIndex = (channelName.charCodeAt(0) || 0) % colors.length;
+  const bg = colors[colorIndex];
+  const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="${bg}"/><text x="50" y="65" font-family="sans-serif" font-size="44" font-weight="bold" fill="#ffffff" text-anchor="middle">${escHtml(channelName.charAt(0).toUpperCase())}</text></svg>`;
+  const avatarFallback = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(avatarSvg)))}`;
+
+  card.innerHTML = `
+    <div class="video-thumb-wrap">
+      <img class="video-thumb" src="${escHtml(item.thumb)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${thumbFallback}';">
+      <span class="duration-pill">${escHtml(item.duration)}</span>
+      <span class="platform-badge ${pClass}">
+        <i class="${pIcon}"></i>
+        ${pLabel}
+      </span>
+    </div>
+    <div class="video-card-body">
+      <img class="channel-avatar" src="${escHtml(item.channelAvatar)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${avatarFallback}';">
+      <div class="video-card-info">
+        <div class="video-title">${escHtml(item.title)}</div>
+        <div class="channel-name">${escHtml(item.channelName)}</div>
+        <div class="video-meta">${escHtml(item.views)} • ${escHtml(item.date)}</div>
+      </div>
+    </div>
+  `;
+
+  card.addEventListener('click', () => {
+    
+    openCreateVideoModal(item);
+  });
+
+  return card;
+}
+
+const GRID_COUNT = 8;
+let gridCategory = 'all';
+let gridShownIds = [];
+let gridRenderToken = 0;
+
+function renderGridCategories(categories) {
+  const box = document.getElementById('grid-categories');
+  if (!box) return;
+  if (!categories || !categories.length) { box.innerHTML = ''; box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = '';
+  categories.forEach(c => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'grid-chip' + (c.key === gridCategory ? ' active' : '');
+    chip.textContent = c.label;
+    chip.addEventListener('click', () => {
+      if (gridCategory === c.key) return;
+      gridCategory = c.key;
+      gridShownIds = [];
+      renderLobbyVideoGrid();
+    });
+    box.appendChild(chip);
+  });
+}
+
+function skeletonCardHtml() {
+  return '<div class="skeleton-card"><div class="skeleton skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-1"></div><div class="skeleton skeleton-line-2"></div></div></div></div>';
+}
+
+// Подборка с YouTube (случайная выборка из популярного); если API недоступен — статичный список.
+async function renderLobbyVideoGrid() {
   const container = document.getElementById('video-grid');
   if (!container) return;
-  container.innerHTML = '';
+  const token = ++gridRenderToken;
+  container.innerHTML = skeletonCardHtml().repeat(4);
+  const refreshBtn = document.getElementById('btn-refresh-grid');
+  if (refreshBtn) refreshBtn.disabled = true;
 
-  
-  const pool = [...ALL_CURATED_VIDEOS];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+  let items = [];
+  let categories = null;
+  try {
+    const exclude = gridShownIds.slice(-40).join(',');
+    const res = await fetch(`/api/recommendations?category=${encodeURIComponent(gridCategory)}&count=${GRID_COUNT}&exclude=${exclude}`);
+    const data = await res.json();
+    items = Array.isArray(data.items) ? data.items : [];
+    if (items.length) categories = data.categories;
+  } catch (e) { /* fallback ниже */ }
+  if (token !== gridRenderToken) return;   // пришёл более свежий запрос
+
+  if (items.length) {
+    gridShownIds.push(...items.map(i => i.id));
+  } else {
+    const pool = [...ALL_CURATED_VIDEOS];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    items = pool.slice(0, GRID_COUNT);
   }
 
-  
-  const selected8 = pool.slice(0, 8);
-
-  selected8.forEach((item) => {
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    const isYt = item.type === 'youtube';
-    const isRutube = item.type === 'rutube';
-    const pClass = isYt ? 'youtube' : (isRutube ? 'rutube' : 'vk');
-    const pIcon = isYt ? 'fa-brands fa-youtube' : 'fa-solid fa-play';
-    const pLabel = isYt ? 'YouTube' : (isRutube ? 'Rutube' : 'VK Видео');
-
-    const thumbFallback = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iMzM3IiB2aWV3Qm94PSIwIDAgNjAwIDMzNyI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iIzFlMWIyZSIvPjxjaXJjbGUgY3g9IjMwMCIgY3k9IjE2OCIgcj0iNDAiIGZpbGw9IiM4YjVjZjYiIG9wYWNpdHk9IjAuOCIvPjxwb2x5Z29uIHBvaW50cz0iMjg4LDE0OCAzMjQsMTY4IDI4OCwxODgiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=";
-    const colors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#06b6d4'];
-    const colorIndex = (item.channelName.charCodeAt(0) || 0) % colors.length;
-    const bg = colors[colorIndex];
-    const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="${bg}"/><text x="50" y="65" font-family="sans-serif" font-size="44" font-weight="bold" fill="#ffffff" text-anchor="middle">${item.channelName.charAt(0).toUpperCase()}</text></svg>`;
-    const avatarFallback = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(avatarSvg)))}`;
-
-    card.innerHTML = `
-      <div class="video-thumb-wrap">
-        <img class="video-thumb" src="${item.thumb}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${thumbFallback}';">
-        <span class="duration-pill">${item.duration}</span>
-        <span class="platform-badge ${pClass}">
-          <i class="${pIcon}"></i>
-          ${pLabel}
-        </span>
-      </div>
-      <div class="video-card-body">
-        <img class="channel-avatar" src="${item.channelAvatar}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='${avatarFallback}';">
-        <div class="video-card-info">
-          <div class="video-title">${item.title}</div>
-          <div class="channel-name">${item.channelName}</div>
-          <div class="video-meta">${item.views} • ${item.date}</div>
-        </div>
-      </div>
-    `;
-
-    card.addEventListener('click', () => {
-      
-      openCreateVideoModal(item);
-    });
-
+  renderGridCategories(categories);
+  container.innerHTML = '';
+  items.forEach(item => {
+    const card = buildVideoCard(item);
+    card.addEventListener('click', () => openCreateVideoModal(item));
     container.appendChild(card);
   });
+  if (refreshBtn) refreshBtn.disabled = false;
 }
 
 function openCreateVideoModal(videoItem) {
@@ -3238,6 +3294,10 @@ window.addEventListener('touchmove', (e) => {
 
 initAvatarPicker();
 initCropModal();
+{
+  const refreshBtn = document.getElementById('btn-refresh-grid');
+  if (refreshBtn) refreshBtn.addEventListener('click', () => renderLobbyVideoGrid());
+}
 
 // ── Авторизация ─────────────────────────────────────────────────────────────
 async function api(method, url, body) {

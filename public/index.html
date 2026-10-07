@@ -127,8 +127,12 @@
 
       <div class="grid-content-area">
         <div class="grid-header-title">
-          <h2><i class="fa-solid fa-fire text-gradient"></i> Рекомендуемые видео</h2>
+          <div class="grid-title-row">
+            <h2><i class="fa-solid fa-fire text-gradient"></i> Рекомендуемые видео</h2>
+            <button type="button" id="btn-refresh-grid" class="profile-link-btn" title="Показать другие"><i class="fa-solid fa-rotate"></i> Обновить</button>
+          </div>
           <p>Нажмите на любое видео, чтобы мгновенно создать комнату и смотреть вместе</p>
+          <div id="grid-categories" class="grid-categories" hidden></div>
         </div>
         <div id="video-grid" class="video-grid">
           
