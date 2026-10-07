@@ -345,6 +345,15 @@ app.get('/api/resolve-video', async (req, res) => {
       }
     }
 
+    if (req.query.debug === '1') {
+      const scripts = [...page.body.matchAll(/<script\b[^>]*\ssrc=["']([^"']+)["']/gi)].map(m => m[1]).slice(0, 30);
+      const hints = [...new Set([...page.body.matchAll(/["'(]((?:https?:)?\/\/[^"'\s)]*?(?:api|player|embed|video|stream|cdn|playlist)[^"'\s)]*)/gi)].map(m => m[1]))].slice(0, 40);
+      return res.json({
+        debug: true, status: page.status, contentType: page.contentType, finalUrl: page.finalUrl,
+        bytes: page.body.length, title: cleanTitle, media, iframes, scripts, hints,
+        snippet: page.body.replace(/\s+/g, ' ').slice(0, 3000)
+      });
+    }
     if (!media.length) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Не удалось найти видео на этой странице' });
     }
